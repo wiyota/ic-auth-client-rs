@@ -1,0 +1,16 @@
+# rust
+debug/
+target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Various IDEs and Editors
+.vscode/
+.idea/
+.zed/
+
+# OS
+
+## MacOS
+.DS_Store

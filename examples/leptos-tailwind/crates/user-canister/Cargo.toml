@@ -1,0 +1,15 @@
+[package]
+publish = false
+name = "ic-auth-client-leptos-user-canister"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid.workspace = true
+ic-cdk = "0.15.1"
+ic-cdk-macros = "0.15.0"
+ic-stable-structures.workspace = true
+shared = { workspace = true, features = ["backend"] }

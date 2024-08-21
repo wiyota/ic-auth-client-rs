@@ -1,0 +1,21 @@
+[package]
+publish = false
+name = "ic-auth-client-leptos-frontend"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+candid.workspace = true
+console_error_panic_hook = "0.1.7"
+dotenvy_macro = "0.15.7"
+ic-auth-client = { path = "../../../../" }
+ic-agent = { version = "0.37.1", features = ["wasm-bindgen", "reqwest"] }
+ic-cdk = "0.15.0"
+leptos = { workspace = true, features = ["csr", "tracing"] }
+leptos_meta = { workspace = true, features = ["csr"] }
+leptos_router = { workspace = true, features = ["csr"] }
+serde.workspace = true
+serde-wasm-bindgen = "0.6.4"
+shared = { workspace = true, features = ["frontend"] }
+thiserror = "1.0.58"
+web-sys = "0.3.69"

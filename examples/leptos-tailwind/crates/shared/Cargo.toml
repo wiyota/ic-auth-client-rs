@@ -1,0 +1,18 @@
+[package]
+publish = false
+name = "shared"
+version = "0.0.1"
+edition = "2021"
+
+[features]
+default = []
+frontend = ["leptos"]
+backend = ["ic-stable-structures"]
+
+[dependencies]
+candid.workspace = true
+derive_more = "0.99.18"
+dotenvy_macro = "0.15.7"
+ic-stable-structures = { workspace = true, optional = true }
+leptos = { workspace = true, optional = true }
+serde.workspace = true

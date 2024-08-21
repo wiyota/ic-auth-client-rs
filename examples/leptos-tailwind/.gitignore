@@ -1,0 +1,38 @@
+# rust
+debug/
+target/
+**/*.rs.bk
+*.pdb
+!Cargo.lock
+
+# node
+node_modules/
+
+# frontend code
+dist/
+
+## tailwind output
+tw_output.css
+
+# environment variables
+.env
+
+# dfx temporary files
+.dfx/
+deps/
+
+# canisters on ic
+canister_ids.json
+
+# canbench
+**/.canbench/
+
+# Various IDEs and Editors
+.vscode/
+.idea/
+.zed/
+
+# OS
+
+## MacOS
+.DS_Store
