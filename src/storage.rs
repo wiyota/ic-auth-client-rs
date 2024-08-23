@@ -11,7 +11,7 @@ pub(crate) const KEY_VECTOR: &str = "iv";
 const LOCAL_STORAGE_PREFIX: &str = "ic-";
 
 /// Enum for storing different types of keys.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredKey {
     String(String),
     CryptoKeyPair(CryptoKeyPair),
