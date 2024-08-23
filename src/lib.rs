@@ -664,6 +664,7 @@ impl AuthClient {
     }
 }
 
+/// Builder for the [`AuthClient`].
 #[derive(Default)]
 pub struct AuthClientBuilder {
     identity: Option<IdentityType>,
@@ -843,6 +844,7 @@ impl AuthClientLoginOptions {
     }
 }
 
+/// Builder for the [`AuthClientLoginOptions`].
 pub struct AuthClientLoginOptionsBuilder {
     identity_provider: Option<web_sys::Url>,
     max_time_to_live: Option<u64>,
@@ -977,6 +979,7 @@ impl IdleOptions {
     }
 }
 
+/// Builder for [`IdleOptions`].
 pub struct IdleOptionsBuilder {
     disable_idle: Option<bool>,
     disable_default_idle_callback: Option<bool>,

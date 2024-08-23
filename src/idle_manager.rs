@@ -149,6 +149,7 @@ impl IdleManagerOptions {
     }
 }
 
+/// Builder for the [`IdleManagerOptions`].
 #[derive(Default)]
 pub struct IdleManagerOptionsBuilder {
     on_idle: Option<Callback>,
