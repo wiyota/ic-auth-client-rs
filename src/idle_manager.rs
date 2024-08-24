@@ -115,17 +115,15 @@ impl IdleManager {
                     .and_then(|options| options.scroll_debounce)
                     .unwrap_or(Self::DEFAULT_SCROLL_DEBOUNCE);
 
-        if let Some(timeout) = self.scroll_debounce_timeout.borrow_mut().take() {
-            timeout.cancel();
-        }
-
         let mut self_clone = self.clone();
-        self.scroll_debounce_timeout.borrow_mut().replace(
+        if let Some(timeout) = self.scroll_debounce_timeout.borrow_mut().replace(
             Some(Timeout::new(
                 delay,
                 move || self_clone.reset_timer()
             ))
-        );
+        ) {
+            timeout.cancel();
+        };
     }
 }
 
