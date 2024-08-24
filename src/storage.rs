@@ -199,3 +199,31 @@ impl AuthClientStorage for AuthClientStorageType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    async fn test_local_storage() {
+        let mut storage = LocalStorage::default();
+        storage.set("test", "value").await;
+        let value = storage.get("test").await.unwrap();
+        assert_eq!(value, StoredKey::String("value".to_string()));
+        storage.remove("test").await;
+        let value = storage.get("test").await;
+        assert_eq!(value, None);
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_auth_client_storage_type() {
+        let mut storage = AuthClientStorageType::LocalStorage(Rc::new(RefCell::new(LocalStorage::default())));
+        storage.set("test", "value").await;
+        let value = storage.get("test").await.unwrap();
+        assert_eq!(value, StoredKey::String("value".to_string()));
+        storage.remove("test").await;
+        let value = storage.get("test").await;
+        assert_eq!(value, None);
+    }
+}

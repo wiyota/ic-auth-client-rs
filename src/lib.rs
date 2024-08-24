@@ -1064,3 +1064,81 @@ impl fmt::Display for BaseKeyType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[test]
+    fn test_idle_options_builder() {
+        let mut builder = IdleOptionsBuilder::new();
+        builder.disable_idle(true);
+        builder.disable_default_idle_callback(true);
+        builder.on_idle(|| {});
+        builder.idle_timeout(1000);
+        builder.scroll_debounce(500);
+        builder.capture_scroll(true);
+        let options = builder.build();
+        assert_eq!(options.disable_idle, Some(true));
+        assert_eq!(options.disable_default_idle_callback, Some(true));
+        assert!(options.idle_manager_options.on_idle.borrow().is_some());
+        assert_eq!(options.idle_manager_options.idle_timeout, Some(1000));
+        assert_eq!(options.idle_manager_options.scroll_debounce, Some(500));
+        assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
+    }
+
+    #[test]
+    fn test_idle_options_builder_chaining() {
+        let options = IdleOptions::builder()
+            .disable_idle(true)
+            .disable_default_idle_callback(true)
+            .on_idle(|| {})
+            .idle_timeout(1000)
+            .scroll_debounce(500)
+            .capture_scroll(true)
+            .build();
+        assert_eq!(options.disable_idle, Some(true));
+        assert_eq!(options.disable_default_idle_callback, Some(true));
+        assert!(options.idle_manager_options.on_idle.borrow().is_some());
+        assert_eq!(options.idle_manager_options.idle_timeout, Some(1000));
+        assert_eq!(options.idle_manager_options.scroll_debounce, Some(500));
+        assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
+    }
+
+    #[test]
+    fn test_base_key_type_display() {
+        assert_eq!(BaseKeyType::Ed25519.to_string(), ED25519_KEY_LABEL);
+    }
+
+    #[test]
+    fn test_base_key_type_default() {
+        assert_eq!(BaseKeyType::default(), BaseKeyType::Ed25519);
+    }
+
+    #[wasm_bindgen_test]
+    async fn auth_client_builder() {
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
+            .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+            .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
+        let identity = IdentityType::Ed25519(Arc::new(BasicIdentity::from_key_pair(key_pair)));
+
+        let idle_options = IdleOptions::builder()
+            .disable_idle(true)
+            .disable_default_idle_callback(true)
+            .on_idle(|| {})
+            .idle_timeout(1000)
+            .scroll_debounce(500)
+            .capture_scroll(true)
+            .build();
+
+        let auth_client = AuthClient::builder()
+            .identity(identity)
+            .idle_options(idle_options)
+            .build()
+            .await;
+
+        assert!(!auth_client.is_authenticated());
+    }
+}

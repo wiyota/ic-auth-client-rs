@@ -202,7 +202,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_idle_manager() {
         let options = IdleManagerOptions::builder()
-            .idle_timeout(1000)
+            .idle_timeout(500)
             .build();
 
         let idle_manager = IdleManager::new(Some(options));
@@ -217,6 +217,102 @@ mod tests {
 
         // Wait for the idle timeout to trigger
         wasm_timer::Delay::new(std::time::Duration::from_millis(2000)).await.unwrap();
+
+        assert!(*callback.borrow());
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_idle_manager_with_reset_timer() {
+        let options = IdleManagerOptions::builder()
+            .idle_timeout(1000)
+            .build();
+
+        let idle_manager = IdleManager::new(Some(options));
+
+        let callback = Rc::new(RefCell::new(false));
+        let mut callback_clone = callback.clone();
+        idle_manager.register_callback(move || {
+            callback_clone.borrow_mut().replace(true);
+        });
+
+        assert!(!*callback.borrow());
+
+        wasm_timer::Delay::new(std::time::Duration::from_millis(500)).await.unwrap();
+
+        // Trigger a mousemove event
+        let window = web_sys::window().unwrap();
+        let event = window.document().unwrap().create_event("Event").unwrap();
+        event.init_event("mousemove");
+        window.dispatch_event(&event).unwrap();
+
+        wasm_timer::Delay::new(std::time::Duration::from_millis(700)).await.unwrap();
+
+        assert!(!*callback.borrow());
+
+        // Wait for the idle timeout to trigger
+        wasm_timer::Delay::new(std::time::Duration::from_millis(500)).await.unwrap();
+
+        assert!(*callback.borrow());
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_idle_manager_with_scroll_debounce_1() {
+        let options = IdleManagerOptions::builder()
+            .idle_timeout(1000)
+            .capture_scroll(true)
+            .scroll_debounce(500)
+            .build();
+
+        let idle_manager = IdleManager::new(Some(options));
+
+        let callback = Rc::new(RefCell::new(false));
+        let mut callback_clone = callback.clone();
+        idle_manager.register_callback(move || {
+            callback_clone.borrow_mut().replace(true);
+        });
+
+        assert!(!*callback.borrow());
+
+        let window = window();
+        let event = window.document().unwrap().create_event("Event").unwrap();
+        event.init_event("scroll");
+
+        for _ in 0..7 {
+            wasm_timer::Delay::new(std::time::Duration::from_millis(200)).await.unwrap();
+            window.dispatch_event(&event).unwrap();
+        }
+
+        assert!(*callback.borrow());
+    }
+
+    #[wasm_bindgen_test]
+    async fn test_idle_manager_with_scroll_debounce_2() {
+        let options = IdleManagerOptions::builder()
+            .idle_timeout(1000)
+            .capture_scroll(true)
+            .scroll_debounce(500)
+            .build();
+
+        let idle_manager = IdleManager::new(Some(options));
+
+        let callback = Rc::new(RefCell::new(false));
+        let mut callback_clone = callback.clone();
+        idle_manager.register_callback(move || {
+            callback_clone.borrow_mut().replace(true);
+        });
+
+        let window = window();
+        let event = window.document().unwrap().create_event("Event").unwrap();
+        event.init_event("scroll");
+        window.dispatch_event(&event).unwrap();
+
+        assert!(!*callback.borrow());
+
+        wasm_timer::Delay::new(std::time::Duration::from_millis(1200)).await.unwrap();
+
+        assert!(!*callback.borrow());
+
+        wasm_timer::Delay::new(std::time::Duration::from_millis(700)).await.unwrap();
 
         assert!(*callback.borrow());
     }
