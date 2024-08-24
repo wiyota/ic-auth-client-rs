@@ -1,9 +1,21 @@
 [package]
-publish = false
 name = "ic-auth-client"
-authors = ["Inomoto, Yota <yota@perforate.org>"]
 version = "0.0.1"
+authors = ["Inomoto, Yota <yota@perforate.org>"]
+license = "Apache-2.0"
 edition = "2021"
+rust-version = "1.75.0"
+
+description = "A client library for Internet Computer identity authentication services."
+include = ["/src", "/Cargo.toml", "/README.md", "/LICENSE"]
+
+documentation = "https://docs.rs/ic-auth-client/"
+repository = "https://github.com/wiyota/ic-auth-client/"
+
+readme = "README.md"
+
+categories = ["api-bindings", "authentication", "wasm"]
+keywords = ["icp", "internet-computer", "identity", "frontend"]
 
 [lib]
 crate-type = ["rlib"]
