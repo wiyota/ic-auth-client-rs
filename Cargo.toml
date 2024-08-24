@@ -10,7 +10,7 @@ description = "A client library for Internet Computer identity authentication se
 include = ["/src", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 documentation = "https://docs.rs/ic-auth-client/"
-repository = "https://github.com/wiyota/ic-auth-client/"
+repository = "https://github.com/wiyota/ic-auth-client-rs/"
 
 readme = "README.md"
 
