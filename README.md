@@ -4,11 +4,11 @@ Port of [@dfinity/auth-client](https://github.com/dfinity/agent-js/tree/main/pac
 
 ## Installation
 
-Add the following to your `Cargo.toml` for now:
+Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ic-auth-client = { git = "https://github.com/wiyota/ic-auth-client-rs.git" }
+ic-auth-client = "0.1"
 ```
 
 ### In the browser:
