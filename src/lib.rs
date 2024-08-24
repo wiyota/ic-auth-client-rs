@@ -1070,7 +1070,7 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::*;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_idle_options_builder() {
         let mut builder = IdleOptionsBuilder::new();
         builder.disable_idle(true);
@@ -1088,7 +1088,7 @@ mod tests {
         assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_idle_options_builder_chaining() {
         let options = IdleOptions::builder()
             .disable_idle(true)
@@ -1106,12 +1106,12 @@ mod tests {
         assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_base_key_type_display() {
         assert_eq!(BaseKeyType::Ed25519.to_string(), ED25519_KEY_LABEL);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_base_key_type_default() {
         assert_eq!(BaseKeyType::default(), BaseKeyType::Ed25519);
     }
@@ -1140,7 +1140,7 @@ mod tests {
         assert!(!auth_client.is_authenticated());
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_auth_client_login_options_builder() {
         let custom_values = vec![("key".to_string(), "value".into())].into_iter().collect();
 

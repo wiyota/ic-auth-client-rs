@@ -67,8 +67,9 @@ impl DelegationChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen_test::*;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_delegation_chain() {
         let delegation_chain = DelegationChain {
             delegations: vec![],
@@ -80,7 +81,7 @@ mod tests {
         assert_eq!(json, json2);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_is_delegation_valid() {
         let delegation_chain = DelegationChain {
             delegations: vec![],
@@ -89,7 +90,7 @@ mod tests {
         assert!(delegation_chain.is_delegation_valid(None));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn test_is_delegation_valid_expired() {
         let delegation_chain = DelegationChain {
             delegations: vec![SignedDelegation {
