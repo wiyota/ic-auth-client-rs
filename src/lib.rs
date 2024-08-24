@@ -1117,11 +1117,9 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn auth_client_builder() {
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
-            .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
-        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
-            .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
+    async fn test_auth_client_builder() {
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
         let identity = IdentityType::Ed25519(Arc::new(BasicIdentity::from_key_pair(key_pair)));
 
         let idle_options = IdleOptions::builder()
@@ -1140,5 +1138,21 @@ mod tests {
             .await;
 
         assert!(!auth_client.is_authenticated());
+    }
+
+    #[test]
+    fn test_auth_client_login_options_builder() {
+        let custom_values = vec![("key".to_string(), "value".into())].into_iter().collect();
+
+        let options = AuthClientLoginOptions::builder()
+            .allow_pin_authentication(true)
+            .custom_values(custom_values)
+            .on_error(|_| {})
+            .on_success(|_| {})
+            .build();
+
+        assert_eq!(options.allow_pin_authentication, Some(true));
+        assert!(options.on_error.is_some());
+        assert!(options.on_success.is_some());
     }
 }
