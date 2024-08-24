@@ -996,19 +996,19 @@ impl IdleOptionsBuilder {
     }
 
     /// If set to `true`, disables the idle timeout functionality.
-    pub fn disable_idle(mut self, disable_idle: bool) -> Self {
+    pub fn disable_idle(&mut self, disable_idle: bool) -> &mut Self {
         self.disable_idle = Some(disable_idle);
         self
     }
 
     /// If set to `true`, disables the default idle timeout callback.
-    pub fn disable_default_idle_callback(mut self, disable_default_idle_callback: bool) -> Self {
+    pub fn disable_default_idle_callback(&mut self, disable_default_idle_callback: bool) -> &mut Self {
         self.disable_default_idle_callback = Some(disable_default_idle_callback);
         self
     }
 
     /// Options for the [`IdleManager`] that handles idle timeouts.
-    pub fn idle_manager_options(mut self, idle_manager_options: IdleManagerOptions) -> Self {
+    pub fn idle_manager_options(&mut self, idle_manager_options: IdleManagerOptions) -> &mut Self {
         self.idle_manager_options = idle_manager_options;
         self
     }
@@ -1038,11 +1038,11 @@ impl IdleOptionsBuilder {
     }
 
     /// Build the [`IdleOptions`].
-    pub fn build(self) -> IdleOptions {
+    pub fn build(&mut self) -> IdleOptions {
         IdleOptions {
-            disable_idle: self.disable_idle,
-            disable_default_idle_callback: self.disable_default_idle_callback,
-            idle_manager_options: self.idle_manager_options,
+            disable_idle: mem::take(&mut self.disable_idle),
+            disable_default_idle_callback: mem::take(&mut self.disable_default_idle_callback),
+            idle_manager_options: mem::take(&mut self.idle_manager_options),
         }
     }
 }
