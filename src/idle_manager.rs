@@ -1,5 +1,5 @@
 use std::{borrow::BorrowMut, cell::RefCell, mem, rc::Rc};
-use web_sys::window;
+use gloo_utils::window;
 use gloo_timers::callback::Timeout;
 use gloo_events::EventListener;
 
@@ -52,13 +52,13 @@ impl IdleManager {
 
         EVENTS.iter().for_each(|event| {
             let mut instance_clone = instance.clone();
-            let listener = EventListener::new(&window().unwrap(), *event, move |_| instance_clone.reset_timer());
+            let listener = EventListener::new(&window(), *event, move |_| instance_clone.reset_timer());
             instance.event_handlers.as_ref().borrow_mut().push(listener);
         });
 
         if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
             let mut instance_clone = instance.clone();
-            let listener = EventListener::new(&window().unwrap(), "scroll", move |_| instance_clone.scroll_debounce(&options));
+            let listener = EventListener::new(&window(), "scroll", move |_| instance_clone.scroll_debounce(&options));
             instance.event_handlers.as_ref().borrow_mut().push(listener);
         }
 

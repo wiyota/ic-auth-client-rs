@@ -11,7 +11,7 @@ use crate::{
 };
 use gloo_console::{error, warn};
 use gloo_events::EventListener;
-use gloo_utils::format::JsValueSerdeExt;
+use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
     export::Principal,
     identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, SignedDelegation},
@@ -24,7 +24,7 @@ use std::{cell::RefCell, collections::HashMap, fmt, mem, rc::Rc, sync::Arc};
 use storage::StoredKey;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{window, Location, MessageEvent};
+use web_sys::{Location, MessageEvent};
 
 pub mod idle_manager;
 pub mod storage;
@@ -308,7 +308,7 @@ impl AuthClient {
                             let chain = chain.clone();
                             spawn_local(async move {
                                 Self::logout_core(identity, storage, chain, None).await;
-                                window().unwrap().location().reload().unwrap();
+                                window().location().reload().unwrap();
                             });
                         }
                     };
@@ -586,7 +586,7 @@ impl AuthClient {
             }
         };
 
-        Ok(EventListener::new(&window().unwrap(), "message", callback))
+        Ok(EventListener::new(&window(), "message", callback))
     }
 
     /// Handles a failed authentication response.
