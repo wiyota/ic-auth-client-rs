@@ -1207,7 +1207,6 @@ dependencies = [
  "leptos",
  "leptos_meta",
  "leptos_router",
- "quinn-proto",
  "serde",
  "serde-wasm-bindgen",
  "shared",
@@ -2894,7 +2893,6 @@ version = "0.1.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
