@@ -14,7 +14,7 @@ fi
 npm ci
 
 # build user-canister
-cargo build -p ic-auth-client-leptos-user-canister --release --target wasm32-unknown-unknown
+cargo build -p ic_auth_client_leptos_user_canister --release --target wasm32-unknown-unknown
 
 # pull and setup internet identity canister in local
 dfx deps pull

@@ -1,6 +1,6 @@
 [package]
 publish = false
-name = "ic-auth-client-leptos-frontend"
+name = "ic_auth_client_leptos_frontend"
 version = "0.0.1"
 edition = "2021"
 

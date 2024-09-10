@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "ic-auth-client"
-version = "0.0.1"
+version = "0.1.1"
 dependencies = [
  "base64",
  "gloo-console",
@@ -1096,48 +1096,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-timer",
  "web-sys",
-]
-
-[[package]]
-name = "ic-auth-client-leptos-backend"
-version = "0.0.1"
-dependencies = [
- "candid",
- "ic-cdk",
- "ic-cdk-macros",
- "ic-stable-structures",
- "shared",
-]
-
-[[package]]
-name = "ic-auth-client-leptos-frontend"
-version = "0.0.1"
-dependencies = [
- "candid",
- "console_error_panic_hook",
- "dotenvy_macro",
- "ic-agent",
- "ic-auth-client",
- "ic-cdk",
- "leptos",
- "leptos_meta",
- "leptos_router",
- "serde",
- "serde-wasm-bindgen",
- "shared",
- "thiserror",
- "web-sys",
-]
-
-[[package]]
-name = "ic-auth-client-leptos-user-canister"
-version = "0.0.1"
-dependencies = [
- "candid",
- "ic-cdk",
- "ic-cdk-macros",
- "ic-stable-structures",
- "shared",
 ]
 
 [[package]]
@@ -1224,6 +1182,49 @@ name = "ic0"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8de254dd67bbd58073e23dc1c8553ba12fa1dc610a19de94ad2bbcd0460c067f"
+
+[[package]]
+name = "ic_auth_client_leptos_backend"
+version = "0.0.1"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "ic-cdk-macros",
+ "ic-stable-structures",
+ "shared",
+]
+
+[[package]]
+name = "ic_auth_client_leptos_frontend"
+version = "0.0.1"
+dependencies = [
+ "candid",
+ "console_error_panic_hook",
+ "dotenvy_macro",
+ "ic-agent",
+ "ic-auth-client",
+ "ic-cdk",
+ "leptos",
+ "leptos_meta",
+ "leptos_router",
+ "quinn-proto",
+ "serde",
+ "serde-wasm-bindgen",
+ "shared",
+ "thiserror",
+ "web-sys",
+]
+
+[[package]]
+name = "ic_auth_client_leptos_user_canister"
+version = "0.0.1"
+dependencies = [
+ "candid",
+ "ic-cdk",
+ "ic-cdk-macros",
+ "ic-stable-structures",
+ "shared",
+]
 
 [[package]]
 name = "ic_bls12_381"
@@ -1999,9 +2000,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.6"
+version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba92fb39ec7ad06ca2582c0ca834dfeadcaf06ddfc8e635c80aa7e1c05315fdd"
+checksum = "fadfaed2cd7f389d0161bb73eeb07b7b78f8691047a6f3e73caaeae55310a4a6"
 dependencies = [
  "bytes",
  "rand",
@@ -2893,6 +2894,7 @@ version = "0.1.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",

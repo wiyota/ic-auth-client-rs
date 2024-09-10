@@ -2,7 +2,7 @@
   "canisters": {
     "ic-auth-client-leptos-backend": {
       "candid": ".candid/ic-auth-client-leptos-backend.did",
-      "package": "ic-auth-client-leptos-backend",
+      "package": "ic_auth_client_leptos_backend",
       "type": "rust"
     },
     "ic-auth-client-leptos-frontend": {
