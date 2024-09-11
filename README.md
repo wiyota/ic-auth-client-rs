@@ -2,15 +2,6 @@
 
 Port of [@dfinity/auth-client](https://github.com/dfinity/agent-js/tree/main/packages/auth-client) for the Rust programming language.
 
-## Installation
-
-Add the following to your `Cargo.toml`:
-
-```toml
-[dependencies]
-ic-auth-client = "0.1"
-```
-
 ### In the browser:
 
 ```rust
