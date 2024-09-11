@@ -38,7 +38,7 @@ let options = AuthClientLoginOptions::builder()
     })
     .build();
 
-auth_client.login_with_options(options).await;
+auth_client.login_with_options(options);
 ```
 
 It opens an `identity.ic0.app` window, saves your delegation to localStorage, and then sets you up with an identity.

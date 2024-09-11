@@ -409,13 +409,12 @@ impl AuthClient {
     }
 
     /// Logs the user in with default options.
-    pub async fn login(&mut self) {
-        self.login_with_options(AuthClientLoginOptions::default())
-            .await;
+    pub fn login(&mut self) {
+        self.login_with_options(AuthClientLoginOptions::default());
     }
 
     /// Logs the user in with the provided options.
-    pub async fn login_with_options(&mut self, options: AuthClientLoginOptions) {
+    pub fn login_with_options(&mut self, options: AuthClientLoginOptions) {
         let window = web_sys::window().unwrap();
 
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)

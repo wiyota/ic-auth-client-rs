@@ -53,7 +53,7 @@ pub fn get_identity() -> Arc<dyn Identity> {
     }
 }
 
-pub async fn login() -> Result<(), AuthClientError> {
+pub fn login() -> Result<(), AuthClientError> {
     let mut dfx_network = dotenv!("DFX_NETWORK").to_string();
     if dfx_network.is_empty() {
         dfx_network = env::var("DFX_NETWORK").expect("DFX_NETWORK is must be set");
@@ -89,7 +89,7 @@ pub async fn login() -> Result<(), AuthClientError> {
         .on_error(on_error)
         .build();
 
-    auth_client()?.login_with_options(options).await;
+    auth_client()?.login_with_options(options);
 
     Ok(())
 }
