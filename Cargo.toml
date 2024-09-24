@@ -21,20 +21,20 @@ keywords = ["icp", "internet-computer", "identity", "frontend"]
 crate-type = ["rlib"]
 
 [dependencies]
-ic-agent = { version = "0.37.1", features = ["wasm-bindgen"] }
+ic-agent = { version = "0.38.1", features = ["wasm-bindgen"] }
 base64 = "0.22.1"
 gloo-console = "0.3.0"
 gloo-events = "0.2.0"
 gloo-timers = "0.3.0"
 gloo-utils = "0.2.0"
 ring = { version = "0.17.8", features = ["wasm32_unknown_unknown_js"] }
-serde = { version = "1.0.19", features = ["derive"] }
-serde_json = "1.0.117"
-serde-wasm-bindgen = "0.6.4"
-wasm-bindgen = "0.2.92"
-wasm-bindgen-futures = "0.4.42"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+serde-wasm-bindgen = "0.6.5"
+wasm-bindgen = "0.2.93"
+wasm-bindgen-futures = "0.4.43"
 wasm-timer = "0.2.5"
-web-sys = { version = "0.3.69", default-features = false, features = [
+web-sys = { version = "0.3.70", default-features = false, features = [
     "Window",
     "EventListener",
     "Location",
