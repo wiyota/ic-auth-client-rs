@@ -1,6 +1,14 @@
-# ic-auth-client-rs
+# ic-auth-client
 
-Port of [@dfinity/auth-client](https://github.com/dfinity/agent-js/tree/main/packages/auth-client) for the Rust programming language.
+Port of [@dfinity/auth-client](https://www.npmjs.com/package/@dfinity/auth-client) for the Rust programming language.
+
+This is a crate for developers who build the frontend of applications for Internet Computer using Rust as the primary language within a Web browser or Webview environment.
+
+If you use JavaScript for frontend, you can use the Internet Identity Service compatible libraries such as [@dfinity/auth-client](https://www.npmjs.com/package/@dfinity/auth-client) or [@nfid/identitykit](https://www.npmjs.com/package/@nfid/identitykit).
+
+For native Rust frontend that does not have access to [Browser APIs](https://developer.mozilla.org/en-US/docs/Learn/JavaScript/Client-side_web_APIs/Introduction#apis_in_client-side_javascript), this crate cannot be used, but you may create your own implementation by referring to the structs included in the code.
+
+## Quick Start
 
 ### In the browser:
 
