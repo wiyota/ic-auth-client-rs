@@ -17,7 +17,7 @@ shared = { path = "crates/shared" }
 
 candid = "0.10.10"
 ic-stable-structures = "0.6.5"
-leptos = "0.6.14"
-leptos_meta = "0.6.14"
-leptos_router = "0.6.14"
-serde = { version = "1.0.19", features = ["derive"] }
+leptos = "0.6.15"
+leptos_meta = "0.6.15"
+leptos_router = "0.6.15"
+serde = { version = "1.0.210", features = ["derive"] }

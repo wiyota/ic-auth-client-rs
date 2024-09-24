@@ -1,7 +1,7 @@
 use crate::stores::auth_client::get_identity;
 use candid::{CandidType, Decode, Deserialize, Encode};
 use dotenvy_macro::dotenv;
-use ic_agent::{agent::http_transport::ReqwestTransport, export::Principal, Agent};
+use ic_agent::{export::Principal, Agent};
 use leptos::*;
 use std::{env, time::Duration};
 
@@ -89,14 +89,13 @@ async fn create_agent() -> Agent {
         dfx_network = env::var("DFX_NETWORK").expect("DFX_NETWORK is must be set");
     }
 
-    let transport = match dfx_network.as_str() {
+    let url = match dfx_network.as_str() {
         "local" => {
             let port = 4943;
-            ReqwestTransport::create(format!("http://127.0.0.1:{}", port))
-                .unwrap()
+            format!("http://127.0.0.1:{}", port)
         }
         "ic" => {
-            ReqwestTransport::create("https://ic0.app").unwrap()
+            "https://ic0.app".to_string()
         }
         _ => {
             panic!("Unknown dfx network: {}", dfx_network);
@@ -104,7 +103,7 @@ async fn create_agent() -> Agent {
     };
 
     let agent = Agent::builder()
-        .with_transport(transport)
+        .with_url(url)
         .with_arc_identity(identity)
         .with_ingress_expiry(Some(TIMEOUT))
         .build()
