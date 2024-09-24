@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.2.1] - 2024-09-24
+
+- Updated dependency to `ic-agent` v0.38.
+
 ## [0.2.0] - 2024-09-11
 
 - Breaking: `AuthClient::login()` and `AuthClient::login_with_options()` become synchronous.
