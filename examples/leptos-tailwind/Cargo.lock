@@ -79,6 +79,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.83"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "721cae7de5c34fbb2acd27e21e6d2cf7b886dce0c27388d46c4e6c47ea4318dd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.73",
+]
+
+[[package]]
 name = "attribute-derive"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1036,15 +1047,19 @@ dependencies = [
 
 [[package]]
 name = "ic-agent"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4c2407d2c529d91d2956bd9d7536f2f497dbab747701f15eb35f41c52b472f2"
+checksum = "0783cc46e082dc4b016ff693a45207db55e552e8e6f5e3e2552514761a285f6d"
 dependencies = [
  "async-lock",
+ "async-trait",
  "backoff",
  "cached",
  "candid",
+ "der",
+ "ecdsa",
  "ed25519-consensus",
+ "elliptic-curve",
  "futures-util",
  "getrandom",
  "hex",
@@ -1062,8 +1077,6 @@ dependencies = [
  "rand",
  "rangemap",
  "reqwest",
- "ring",
- "rustls-webpki",
  "sec1",
  "serde",
  "serde_bytes",
@@ -1074,6 +1087,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -1082,18 +1096,22 @@ dependencies = [
 
 [[package]]
 name = "ic-auth-client"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64",
+ "ed25519-consensus",
+ "getrandom",
  "gloo-console",
  "gloo-events",
  "gloo-timers",
  "gloo-utils",
  "ic-agent",
- "ring",
+ "pkcs8",
+ "rand",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-timer",
@@ -1150,9 +1168,9 @@ dependencies = [
 
 [[package]]
 name = "ic-transport-types"
-version = "0.38.1"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a49e37736106da0dc2416935ffaf53abc6afc9e758314b7afc85fcebfb2e943"
+checksum = "90400f5f1371fda054a07e23717d38813f15093e193b8f21a36fd3e2c62a7179"
 dependencies = [
  "candid",
  "hex",
@@ -1160,6 +1178,7 @@ dependencies = [
  "leb128",
  "serde",
  "serde_bytes",
+ "serde_cbor",
  "serde_repr",
  "sha2 0.10.8",
  "thiserror",
@@ -1330,9 +1349,9 @@ dependencies = [
 
 [[package]]
 name = "k256"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "956ff9b67e26e1a6a866cb758f12c6f8746208489e3e4a4b5580802f2f0a587b"
+checksum = "f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b"
 dependencies = [
  "cfg-if",
  "ecdsa",

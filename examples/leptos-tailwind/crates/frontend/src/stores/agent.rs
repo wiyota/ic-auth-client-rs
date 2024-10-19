@@ -105,7 +105,7 @@ async fn create_agent() -> Agent {
     let agent = Agent::builder()
         .with_url(url)
         .with_arc_identity(identity)
-        .with_ingress_expiry(Some(TIMEOUT))
+        .with_ingress_expiry(TIMEOUT)
         .build()
         .unwrap();
 

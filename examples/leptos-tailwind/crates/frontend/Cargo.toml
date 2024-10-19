@@ -9,7 +9,7 @@ candid.workspace = true
 console_error_panic_hook = "0.1.7"
 dotenvy_macro = "0.15.7"
 ic-auth-client = { path = "../../../../" }
-ic-agent = { version = "0.38.1", features = ["wasm-bindgen"] }
+ic-agent = { version = "0.39.0", features = ["wasm-bindgen"] }
 ic-cdk = "0.16.0"
 leptos = { workspace = true, features = ["csr", "tracing"] }
 leptos_meta = { workspace = true, features = ["csr"] }
