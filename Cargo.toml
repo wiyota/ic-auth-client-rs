@@ -21,7 +21,7 @@ keywords = ["icp", "internet-computer", "identity", "frontend"]
 crate-type = ["rlib"]
 
 [dependencies]
-ic-agent = { version = "0.38.1", features = ["wasm-bindgen"] }
+ic-agent = { version = "0.39.0", features = ["wasm-bindgen", "ring"] }
 base64 = "0.22.1"
 gloo-console = "0.3.0"
 gloo-events = "0.2.0"

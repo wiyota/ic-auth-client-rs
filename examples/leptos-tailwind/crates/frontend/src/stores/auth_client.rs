@@ -26,6 +26,7 @@ pub fn AuthClientProvider(children: Children) -> impl IntoView {
                 .capture_scroll(true)
                 .build()
                 .await
+                .unwrap(),
         ));
     });
 
