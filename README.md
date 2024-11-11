@@ -8,6 +8,15 @@ If you use JavaScript for frontend, you can use the Internet Identity Service co
 
 For native Rust frontend that does not have access to [Browser APIs](https://developer.mozilla.org/en-US/docs/Learn/JavaScript/Client-side_web_APIs/Introduction#apis_in_client-side_javascript), this crate cannot be used, but you may create your own implementation by referring to the structs included in the code.
 
+## Version compatibility for `ic-agent`
+
+The table below shows the compatible versions of `ic-auth-client` for `ic-agent` versions.
+
+| `ic-agent` version | `ic-auth-client` version |
+| ------------------ | ------------------------ |
+| 0.39.\*            | 0.3.\*                   |
+| 0.37.\* or 0.38.\* | 0.1.\* or 0.2.\*         |
+
 ## Quick Start
 
 ### In the browser:
