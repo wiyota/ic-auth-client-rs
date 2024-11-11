@@ -1,7 +1,5 @@
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
 use ed25519_consensus::{SigningKey, Error as Ed25519Error};
-use pkcs8::der::{self, Decode, SliceReader};
-use pkcs8::PrivateKeyInfo;
 use std::{cell::RefCell, future::Future, rc::Rc};
 use web_sys::{wasm_bindgen::JsValue, CryptoKeyPair, Storage};
 
@@ -25,8 +23,8 @@ impl StoredKey {
         match self {
             StoredKey::String(s) => {
                 let bytes = BASE64_STANDARD_NO_PAD.decode(s).map_err(DecodeError::Base64)?;
-                let pki = PrivateKeyInfo::decode(&mut SliceReader::new(&bytes).map_err(DecodeError::Der)?).map_err(DecodeError::Der)?;
-                SigningKey::try_from(pki.private_key).map_err(DecodeError::Ed25519)
+                let bytes: [u8; 32] = bytes.try_into().map_err(|_| DecodeError::Ed25519(Ed25519Error::InvalidSliceLength))?;
+                Ok(SigningKey::from(bytes))
             },
             StoredKey::CryptoKeyPair(_) => Err(DecodeError::CryptoKeyPair),
         }
@@ -50,8 +48,6 @@ pub enum DecodeError {
     CryptoKeyPair,
     #[error("Ed25519 error: {0}")]
     Ed25519(Ed25519Error),
-    #[error("DER error: {0}")]
-    Der(der::Error),
     #[error("Base64 error: {0}")]
     Base64(base64::DecodeError),
 }
