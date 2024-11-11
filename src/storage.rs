@@ -220,6 +220,17 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::*;
 
+    #[test]
+    fn test_stored_key_encode_decode() {
+        let rng = rand::thread_rng();
+        let signing_key = SigningKey::new(rng);
+
+        let encoded = StoredKey::encode(&signing_key);
+        let key = StoredKey::String(encoded);
+        let decoded = key.decode().unwrap();
+        assert_eq!(signing_key.as_bytes(), decoded.as_bytes());
+    }
+
     #[wasm_bindgen_test]
     async fn test_local_storage() {
         let mut storage = LocalStorage::default();
