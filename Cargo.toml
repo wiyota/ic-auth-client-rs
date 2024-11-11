@@ -21,7 +21,7 @@ keywords = ["icp", "internet-computer", "identity", "frontend"]
 crate-type = ["rlib"]
 
 [dependencies]
-ic-agent = "0.39.0"
+ic-agent = "0.39.1"
 base64 = "0.22.1"
 ed25519-consensus = "2.1.0"
 getrandom = { version = "0.2", optional = true, features = ["js"] }
