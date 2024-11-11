@@ -187,10 +187,15 @@ impl AuthClient {
             if let Some(maybe_local_storage) = maybe_local_storage {
                 let private_key = maybe_local_storage.decode();
 
-                if let Ok(private_key) = private_key {
-                    key = Some(ArcIdentityType::Ed25519(Arc::new(
-                        BasicIdentity::from_signing_key(private_key),
-                    )))
+                match private_key {
+                    Ok(private_key) => {
+                        key = Some(ArcIdentityType::Ed25519(Arc::new(
+                            BasicIdentity::from_signing_key(private_key),
+                        )));
+                    }
+                    Err(e) => {
+                        error!(format!("Failed to decode private key: {:?}", e));
+                    }
                 }
             }
         }
