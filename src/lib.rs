@@ -10,7 +10,7 @@ use crate::{
     util::delegation_chain::DelegationChain,
 };
 use ed25519_consensus::SigningKey;
-use gloo_console::{error, warn};
+use gloo_console::error;
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
