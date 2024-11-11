@@ -1,4 +1,5 @@
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
+use ed25519_consensus::{SigningKey, Error as Ed25519Error};
 use std::{cell::RefCell, future::Future, rc::Rc};
 use web_sys::{wasm_bindgen::JsValue, CryptoKeyPair, Storage};
 
@@ -18,15 +19,19 @@ pub enum StoredKey {
 }
 
 impl StoredKey {
-    pub fn decode(&self) -> Result<Vec<u8>, String> {
+    pub fn decode(&self) -> Result<SigningKey, DecodeError> {
         match self {
-            StoredKey::String(s) => BASE64_STANDARD_NO_PAD.decode(s).map_err(|e| e.to_string()),
-            StoredKey::CryptoKeyPair(_) => Err("CryptoKeyPair cannot be decoded".to_string()),
+            StoredKey::String(s) => {
+                let bytes = BASE64_STANDARD_NO_PAD.decode(s).map_err(DecodeError::Base64)?;
+                let bytes: [u8; 32] = bytes.try_into().map_err(|_| DecodeError::Ed25519(Ed25519Error::InvalidSliceLength))?;
+                Ok(SigningKey::from(bytes))
+            },
+            StoredKey::CryptoKeyPair(_) => Err(DecodeError::CryptoKeyPair),
         }
     }
 
-    pub fn encode<T: AsRef<[u8]>>(data: T) -> String {
-        BASE64_STANDARD_NO_PAD.encode(data.as_ref())
+    pub fn encode(key: &SigningKey) -> String {
+        BASE64_STANDARD_NO_PAD.encode(key.as_bytes())
     }
 }
 
@@ -34,6 +39,16 @@ impl From<String> for StoredKey {
     fn from(value: String) -> Self {
         StoredKey::String(value)
     }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum DecodeError {
+    #[error("CryptoKeyPair cannot be decoded")]
+    CryptoKeyPair,
+    #[error("Ed25519 error: {0}")]
+    Ed25519(Ed25519Error),
+    #[error("Base64 error: {0}")]
+    Base64(base64::DecodeError),
 }
 
 /// Trait for persisting user authentication data.
@@ -204,6 +219,17 @@ impl AuthClientStorage for AuthClientStorageType {
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
+
+    #[test]
+    fn test_stored_key_encode_decode() {
+        let rng = rand::thread_rng();
+        let signing_key = SigningKey::new(rng);
+
+        let encoded = StoredKey::encode(&signing_key);
+        let key = StoredKey::String(encoded);
+        let decoded = key.decode().unwrap();
+        assert_eq!(signing_key.as_bytes(), decoded.as_bytes());
+    }
 
     #[wasm_bindgen_test]
     async fn test_local_storage() {

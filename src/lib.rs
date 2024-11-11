@@ -9,15 +9,16 @@ use crate::{
     },
     util::delegation_chain::DelegationChain,
 };
+use ed25519_consensus::SigningKey;
 use gloo_console::{error, warn};
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
     export::Principal,
-    identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, DelegationError, SignedDelegation},
+    identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, SignedDelegation, DelegationError},
     Identity,
 };
-use ring::{rand::SystemRandom, signature::Ed25519KeyPair};
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{cell::RefCell, collections::HashMap, fmt, mem, rc::Rc, sync::Arc};
@@ -184,14 +185,17 @@ impl AuthClient {
             let maybe_local_storage = storage.get(KEY_STORAGE_KEY).await;
 
             if let Some(maybe_local_storage) = maybe_local_storage {
-                let key_pair = maybe_local_storage.decode();
+                let private_key = maybe_local_storage.decode();
 
-                if let Ok(key_pair) = key_pair {
-                    let key_pair = Ed25519KeyPair::from_pkcs8(key_pair.as_ref()).unwrap();
-
-                    key = Some(ArcIdentityType::Ed25519(Arc::new(
-                        BasicIdentity::from_key_pair(key_pair),
-                    )))
+                match private_key {
+                    Ok(private_key) => {
+                        key = Some(ArcIdentityType::Ed25519(Arc::new(
+                            BasicIdentity::from_signing_key(private_key),
+                        )));
+                    }
+                    Err(e) => {
+                        error!(format!("Failed to decode private key: {:?}", e));
+                    }
                 }
             }
         }
@@ -220,11 +224,11 @@ impl AuthClient {
                                 )
                             };
                             identity =
-                                ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new(
+                                ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                                     public_key,
                                     Box::new(key.clone().unwrap().as_arc_identity()),
                                     delegations,
-                                )?));
+                                )));
                         } else {
                             Self::delete_storage(&mut storage).await;
                             key = None;
@@ -253,16 +257,15 @@ impl AuthClient {
         }
 
         if key.is_none() {
-            let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
-                .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
-            let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
-                .expect("Failed to generate a new Ed25519 key pair for the AuthClient.");
-            key = Some(ArcIdentityType::Ed25519(Arc::new(
-                BasicIdentity::from_key_pair(key_pair),
-            )));
+            let private_key = SigningKey::new(thread_rng());
+
             storage
-                .set(KEY_STORAGE_KEY, StoredKey::encode(pkcs8.as_ref()))
+                .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
                 .await;
+
+            key = Some(ArcIdentityType::Ed25519(Arc::new(
+                BasicIdentity::from_signing_key(private_key),
+            )));
         }
 
         Ok(
@@ -338,11 +341,13 @@ impl AuthClient {
             });
 
             let mut identity_guard = self.identity.borrow_mut();
-            *identity_guard = ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new(
-                user_public_key.clone(),
-                Box::new(self.key.as_arc_identity()),
-                delegations.clone(),
-            )?));
+            *identity_guard = ArcIdentityType::Delegated(Arc::new(
+                DelegatedIdentity::new_unchecked(
+                    user_public_key.clone(),
+                    Box::new(self.key.as_arc_identity()),
+                    delegations.clone(),
+                )
+            ));
         }
 
         if let Some(w) = self.idp_window.borrow_mut().take() {
@@ -1122,9 +1127,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_auth_client_builder() {
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
-        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
-        let identity = IdentityType::Ed25519(Arc::new(BasicIdentity::from_key_pair(key_pair)));
+        let private_key = SigningKey::new(thread_rng());
+        let identity = IdentityType::Ed25519(Arc::new(BasicIdentity::from_signing_key(private_key)));
 
         let idle_options = IdleOptions::builder()
             .disable_idle(true)
