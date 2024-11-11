@@ -46,8 +46,6 @@ web-sys = { version = "0.3.70", default-features = false, features = [
     "Url",
     "console",
     "History",
-    "CryptoKey",
-    "CryptoKeyPair",
 ] }
 
 [dev-dependencies]

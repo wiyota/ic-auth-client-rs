@@ -234,9 +234,6 @@ impl AuthClient {
                             key = None;
                         }
                     }
-                    StoredKey::CryptoKeyPair(_) => {
-                        panic!("Delegation chain is incorrectly stored. A delegation chain should be stored as a string.")
-                    }
                 }
             }
         }

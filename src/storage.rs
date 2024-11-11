@@ -1,7 +1,7 @@
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
 use ed25519_consensus::{SigningKey, Error as Ed25519Error};
 use std::{cell::RefCell, future::Future, rc::Rc};
-use web_sys::{wasm_bindgen::JsValue, CryptoKeyPair, Storage};
+use web_sys::{wasm_bindgen::JsValue, Storage};
 
 /// A key for storing the identity key pair.
 pub const KEY_STORAGE_KEY: &str = "identity";
@@ -15,7 +15,6 @@ const LOCAL_STORAGE_PREFIX: &str = "ic-";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredKey {
     String(String),
-    CryptoKeyPair(CryptoKeyPair),
 }
 
 impl StoredKey {
@@ -26,7 +25,6 @@ impl StoredKey {
                 let bytes: [u8; 32] = bytes.try_into().map_err(|_| DecodeError::Ed25519(Ed25519Error::InvalidSliceLength))?;
                 Ok(SigningKey::from(bytes))
             },
-            StoredKey::CryptoKeyPair(_) => Err(DecodeError::CryptoKeyPair),
         }
     }
 
@@ -43,8 +41,6 @@ impl From<String> for StoredKey {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DecodeError {
-    #[error("CryptoKeyPair cannot be decoded")]
-    CryptoKeyPair,
     #[error("Ed25519 error: {0}")]
     Ed25519(Ed25519Error),
     #[error("Base64 error: {0}")]
