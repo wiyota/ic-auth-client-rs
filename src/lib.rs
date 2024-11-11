@@ -508,11 +508,7 @@ impl AuthClient {
             let event = event.dyn_ref::<MessageEvent>().unwrap();
 
             if event.origin() != identity_provider_url.origin() {
-                warn!(format!(
-                    "WARNING: expected origin '{}', got '{}' (ignoring)",
-                    identity_provider_url.origin(),
-                    event.origin()
-                ));
+                // Ignore any event that is not from the identity provider
                 return;
             }
 

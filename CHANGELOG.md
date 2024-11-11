@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Breaking: Updated dependency to `ic-agent` v0.39. Not compatible with previous versions.
 - Using `ed25519-consensus` instead of `ring` to create `BasicIdentity`.
+- Removes warning that users found unhelpful, when a message originates from other sources than the identity provider during authentication.
 
 ## [0.2.1] - 2024-09-24
 
