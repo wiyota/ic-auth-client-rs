@@ -259,12 +259,13 @@ impl AuthClient {
         if key.is_none() {
             let private_key = SigningKey::new(thread_rng());
 
-            key = Some(ArcIdentityType::Ed25519(Arc::new(
-                BasicIdentity::from_signing_key(private_key.clone()),
-            )));
             storage
-                .set(KEY_STORAGE_KEY, StoredKey::encode(private_key))
+                .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
                 .await;
+
+            key = Some(ArcIdentityType::Ed25519(Arc::new(
+                BasicIdentity::from_signing_key(private_key),
+            )));
         }
 
         Ok(

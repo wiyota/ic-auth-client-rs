@@ -30,9 +30,8 @@ impl StoredKey {
         }
     }
 
-    pub fn encode(key: SigningKey) -> String {
-        let data: [u8; 32] = key.into();
-        BASE64_STANDARD_NO_PAD.encode(data.as_ref())
+    pub fn encode(key: &SigningKey) -> String {
+        BASE64_STANDARD_NO_PAD.encode(key.as_bytes())
     }
 }
 
