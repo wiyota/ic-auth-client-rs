@@ -224,11 +224,11 @@ impl AuthClient {
                                 )
                             };
                             identity =
-                                ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new(
+                                ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                                     public_key,
                                     Box::new(key.clone().unwrap().as_arc_identity()),
                                     delegations,
-                                )?));
+                                )));
                         } else {
                             Self::delete_storage(&mut storage).await;
                             key = None;
@@ -342,11 +342,11 @@ impl AuthClient {
 
             let mut identity_guard = self.identity.borrow_mut();
             *identity_guard = ArcIdentityType::Delegated(Arc::new(
-                DelegatedIdentity::new(
+                DelegatedIdentity::new_unchecked(
                     user_public_key.clone(),
                     Box::new(self.key.as_arc_identity()),
                     delegations.clone(),
-                )?
+                )
             ));
         }
 
