@@ -47,6 +47,12 @@ pub enum DecodeError {
     Base64(base64::DecodeError),
 }
 
+impl From<DecodeError> for JsValue {
+    fn from(err: DecodeError) -> Self {
+        JsValue::from_str(&err.to_string())
+    }
+}
+
 /// Trait for persisting user authentication data.
 pub trait AuthClientStorage {
     fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;

@@ -196,7 +196,7 @@ impl AuthClient {
                         )));
                     }
                     Err(e) => {
-                        error!(format!("Failed to decode private key: {:?}", e));
+                        error!("Failed to decode private key: ", e);
                     }
                 }
             }
