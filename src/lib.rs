@@ -1065,6 +1065,7 @@ impl fmt::Display for BaseKeyType {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(test)]
 mod tests {
     use super::*;

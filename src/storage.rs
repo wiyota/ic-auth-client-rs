@@ -165,6 +165,7 @@ mod tests {
         assert_eq!(signing_key.as_bytes(), decoded.as_bytes());
     }
 
+    #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_local_storage() {
         let mut storage = LocalStorage::default();
@@ -176,6 +177,7 @@ mod tests {
         assert_eq!(value, None);
     }
 
+    #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_auth_client_storage_type() {
         let mut storage = AuthClientStorageType::LocalStorage(Rc::new(RefCell::new(LocalStorage::default())));
