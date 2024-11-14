@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 candid.workspace = true
-ic-cdk = "0.16.0"
-ic-cdk-macros = "0.16.0"
+ic-cdk = "0.17.0"
+ic-cdk-macros = "0.17.0"
 ic-stable-structures.workspace = true
 shared = { workspace = true, features = ["backend"] }
