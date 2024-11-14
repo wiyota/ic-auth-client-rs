@@ -56,3 +56,9 @@ wasm-bindgen-test = "0.3"
 [features]
 default = ["wasm-js"]
 wasm-js = ["getrandom/js", "ic-agent/wasm-bindgen"]
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
