@@ -25,4 +25,4 @@ dfx canister create ic-auth-client-leptos-backend
 
 # deploy canisters in local
 dfx deps deploy
-dfx deploy ic-auth-client-leptos-backend
+dfx deploy --with-cycles 5000000000000 ic-auth-client-leptos-backend
