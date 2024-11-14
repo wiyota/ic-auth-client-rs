@@ -10,7 +10,6 @@ use crate::{
     util::{delegation_chain::DelegationChain, sleep::sleep},
 };
 use ed25519_consensus::SigningKey;
-use gloo_console::error;
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
@@ -110,20 +109,20 @@ struct IdentityServiceResponseMessage {
 
 impl IdentityServiceResponseMessage {
     /// Returns the kind of the Identity Service response.
-    pub fn kind(&self) -> IdentityServiceResponseKind {
+    pub fn kind(&self) -> Result<IdentityServiceResponseKind, String> {
         match self.kind.as_str() {
-            "authorize-ready" => IdentityServiceResponseKind::Ready,
-            "authorize-client-success" => {
-                IdentityServiceResponseKind::AuthSuccess(AuthResponseSuccess {
+            "authorize-ready" => Ok(IdentityServiceResponseKind::Ready),
+            "authorize-client-success" => Ok(IdentityServiceResponseKind::AuthSuccess(
+                AuthResponseSuccess {
                     delegations: self.delegations.clone().unwrap_or_default(),
                     user_public_key: self.user_public_key.clone().unwrap_or_default(),
                     authn_method: self.authn_method.clone().unwrap_or_default(),
-                })
-            }
-            "authorize-client-failure" => {
-                IdentityServiceResponseKind::AuthFailure(self.text.clone().unwrap_or_default())
-            }
-            _ => panic!("Unexpected response kind: {}", self.kind),
+                }
+            )),
+            "authorize-client-failure" => Ok(IdentityServiceResponseKind::AuthFailure(
+                self.text.clone().unwrap_or_default()
+            )),
+            other => Err(format!("Unknown response kind: {}", other)),
         }
     }
 }
@@ -191,12 +190,19 @@ impl AuthClient {
 
                 match private_key {
                     Ok(private_key) => {
-                        key = Some(ArcIdentityType::Ed25519(Arc::new(
-                            BasicIdentity::from_signing_key(private_key),
-                        )));
+                        key = Some(
+                            ArcIdentityType::Ed25519(Arc::new(
+                                BasicIdentity::from_signing_key(private_key),
+                            ))
+                        );
                     }
                     Err(e) => {
-                        error!("Failed to decode private key: ", e);
+                        return Err(
+                            DelegationError::IdentityError(format!(
+                                "Failed to decode private key: {}",
+                                e
+                            ))
+                        );
                     }
                 }
             }
@@ -510,78 +516,81 @@ impl AuthClient {
                 return;
             }
 
-            let message: IdentityServiceResponseMessage = match from_value(event.data()) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    error!(e);
-                    return;
-                }
-            };
+            let message = from_value::<IdentityServiceResponseMessage>(event.data()).map_err(|e| e.to_string());
 
             let max_time_to_live = options
                 .max_time_to_live
                 .unwrap_or(Self::DEFAULT_TIME_TO_LIVE);
 
-            match message.kind() {
-                IdentityServiceResponseKind::Ready => {
-                    use web_sys::js_sys::{Reflect, Uint8Array};
+            let handle_error_wrapper = |error: String| {
+                let event_handler = client.event_handler.clone();
+                let idp_window = client.idp_window.clone();
+                let on_error = options.on_error.clone();
+                spawn_local(async move {
+                    Self::handle_failure(
+                        event_handler,
+                        idp_window,
+                        Some(error),
+                        on_error,
+                    );
+                });
+            };
 
-                    let request = InternetIdentityAuthRequest {
-                        kind: "authorize-client".to_string(),
-                        session_public_key: client
-                            .key
-                            .public_key()
-                            .expect("Failed to get public key"),
-                        max_time_to_live: Some(max_time_to_live),
-                        allow_pin_authentication: options.allow_pin_authentication,
-                        derivation_origin: options
-                            .derivation_origin
-                            .clone()
-                            .map(|d| d.to_string().into()),
-                    };
-                    let request_js_value = JsValue::from_serde(&request).unwrap();
-                    let session_public_key = Uint8Array::from(&request.session_public_key[..]);
-                    Reflect::set(
-                        &request_js_value,
-                        &JsValue::from_str("sessionPublicKey"),
-                        &session_public_key.into(),
-                    )
-                    .unwrap();
+            match message.and_then(|m| m.kind()) {
+                Ok(kind) => match kind {
+                    IdentityServiceResponseKind::Ready => {
+                        use web_sys::js_sys::{Reflect, Uint8Array};
 
-                    if let Some(custom_values) = options.custom_values.clone() {
-                        let custom_values = custom_values.into_iter().map(|(k, v)| {
-                            (k, JsValue::from_serde(&v).unwrap())
-                        }).collect::<HashMap<String, JsValue>>();
-                        for (k, v) in custom_values {
-                            Reflect::set(&request_js_value, &JsValue::from_str(&k), &v).unwrap();
+                        let request = InternetIdentityAuthRequest {
+                            kind: "authorize-client".to_string(),
+                            session_public_key: client
+                                .key
+                                .public_key()
+                                .expect("Failed to get public key"),
+                            max_time_to_live: Some(max_time_to_live),
+                            allow_pin_authentication: options.allow_pin_authentication,
+                            derivation_origin: options
+                                .derivation_origin
+                                .clone()
+                                .map(|d| d.to_string().into()),
+                        };
+                        let request_js_value = JsValue::from_serde(&request).unwrap();
+                        let session_public_key = Uint8Array::from(&request.session_public_key[..]);
+                        Reflect::set(
+                            &request_js_value,
+                            &JsValue::from_str("sessionPublicKey"),
+                            &session_public_key.into(),
+                        )
+                        .unwrap();
+
+                        if let Some(custom_values) = options.custom_values.clone() {
+                            let custom_values = custom_values.into_iter().map(|(k, v)| {
+                                (k, JsValue::from_serde(&v).unwrap())
+                            }).collect::<HashMap<String, JsValue>>();
+                            for (k, v) in custom_values {
+                                Reflect::set(&request_js_value, &JsValue::from_str(&k), &v).unwrap();
+                            }
+                        }
+
+                        if let Some(idp_window) = client.idp_window.borrow().as_ref() {
+                            idp_window
+                                .post_message(&request_js_value, &identity_provider_url.origin())
+                                .unwrap();
                         }
                     }
-
-                    if let Some(idp_window) = client.idp_window.borrow().as_ref() {
-                        idp_window
-                            .post_message(&request_js_value, &identity_provider_url.origin())
-                            .unwrap();
+                    IdentityServiceResponseKind::AuthSuccess(response) => {
+                        let mut client = client.clone();
+                        let on_success = options.on_success.clone();
+                        spawn_local(async move {
+                            client.handle_success(response, on_success).await.unwrap();
+                        });
                     }
-                }
-                IdentityServiceResponseKind::AuthSuccess(response) => {
-                    let mut client = client.clone();
-                    let on_success = options.on_success.clone();
-                    spawn_local(async move {
-                        client.handle_success(response, on_success).await.unwrap();
-                    });
-                }
-                IdentityServiceResponseKind::AuthFailure(error_message) => {
-                    let event_handler = client.event_handler.clone();
-                    let idp_window = client.idp_window.clone();
-                    let on_error = options.on_error.clone();
-                    spawn_local(async move {
-                        Self::handle_failure(
-                            event_handler,
-                            idp_window,
-                            Some(error_message),
-                            on_error,
-                        );
-                    });
+                    IdentityServiceResponseKind::AuthFailure(error_message) => {
+                        handle_error_wrapper(error_message);
+                    }
+                },
+                Err(e) => {
+                    handle_error_wrapper(e);
                 }
             }
         };
