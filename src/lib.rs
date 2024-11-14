@@ -461,8 +461,7 @@ impl AuthClient {
 
         // Add an event listener to handle responses.
         self.event_handler.clone().replace(Some(
-            self.get_event_handler(identity_provider_url.clone(), options.clone())
-                .unwrap(),
+            self.get_event_handler(identity_provider_url.clone(), options.clone()),
         ));
 
         self.check_interruption(options.on_error);
@@ -505,7 +504,7 @@ impl AuthClient {
         &mut self,
         identity_provider_url: web_sys::Url,
         options: AuthClientLoginOptions,
-    ) -> Result<EventListener, JsValue> {
+    ) -> EventListener {
         let client = self.clone();
 
         let callback = move |event: &web_sys::Event| {
@@ -595,7 +594,7 @@ impl AuthClient {
             }
         };
 
-        Ok(EventListener::new(&window(), "message", callback))
+        EventListener::new(&window(), "message", callback)
     }
 
     /// Handles a failed authentication response.
