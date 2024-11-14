@@ -21,37 +21,38 @@ keywords = ["icp", "internet-computer", "identity", "frontend"]
 crate-type = ["rlib"]
 
 [dependencies]
-ic-agent = "0.39.1"
-base64 = "0.22.1"
-ed25519-consensus = "2.1.0"
-getrandom = { version = "0.2", optional = true, features = ["js"] }
-gloo-console = "0.3.0"
-gloo-events = "0.2.0"
-gloo-timers = "0.3.0"
-gloo-utils = "0.2.0"
-rand = "0.8.5"
-serde = { version = "1.0.210", features = ["derive"] }
-serde_json = "1.0.128"
-serde-wasm-bindgen = "0.6.5"
+ic-agent = "0.39"
+base64 = "0.22"
+ed25519-consensus = "2.1"
+getrandom = { version = "0.2", optional = true }
+gloo-console = "0.3"
+gloo-events = "0.2"
+gloo-timers = "0.3"
+gloo-utils = "0.2"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
 thiserror = "1.0"
-wasm-bindgen = "0.2.93"
-wasm-bindgen-futures = "0.4.43"
-wasm-timer = "0.2.5"
-web-sys = { version = "0.3.70", default-features = false, features = [
+web-sys = { version = "0.3", default-features = false, features = [
     "Window",
-    "EventListener",
     "Location",
     "MessageEvent",
     "Storage",
     "Url",
-    "console",
-    "History",
 ] }
 
+[target."cfg(target_family = \"wasm\")".dependencies]
+wasm-bindgen-futures = "0.4"
+wasm-timer = "0.2"
+
+[target."cfg(not(target_family = \"wasm\"))".dependencies]
+tokio = "1.41"
+
 [dev-dependencies]
-serde_test = "1.0.177"
-wasm-bindgen-test = "0.3.43"
+serde_test = "1.0"
+wasm-bindgen-test = "0.3"
 
 [features]
 default = ["wasm-js"]
-wasm-js = ["ic-agent/wasm-bindgen", "getrandom/js"]
+wasm-js = ["getrandom/js", "ic-agent/wasm-bindgen"]
