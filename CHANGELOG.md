@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.3.1] - 2024-11-14
+
+- Relaxed version specification of dependencies.
+- Improved inner error handling.
+
 ## [0.3.0] - 2024-11-11
 
 - Breaking: Updated dependency to `ic-agent` v0.39. Not compatible with previous versions.
