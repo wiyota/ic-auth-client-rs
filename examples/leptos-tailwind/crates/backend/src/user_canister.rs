@@ -9,7 +9,7 @@ use ic_cdk::api::{
 use crate::USER_CANISTERS;
 
 pub async fn create(caller: &Principal) -> CallResult<Principal> {
-    let canister_id = create_canister(CreateCanisterArgument::default(), 500_000_000_000).await?.0.canister_id;
+    let canister_id = create_canister(CreateCanisterArgument::default(), 200_000_000_000).await?.0.canister_id;
 
     let wasm_module = include_bytes!("../../../target/wasm32-unknown-unknown/release/ic_auth_client_leptos_user_canister.wasm").to_vec();
 
