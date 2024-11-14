@@ -7,7 +7,7 @@ use crate::{
     storage::{
         AuthClientStorage, AuthClientStorageType, KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_VECTOR,
     },
-    util::delegation_chain::DelegationChain,
+    util::{delegation_chain::DelegationChain, sleep::sleep},
 };
 use ed25519_consensus::SigningKey;
 use gloo_console::error;
@@ -23,9 +23,11 @@ use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{cell::RefCell, collections::HashMap, fmt, mem, rc::Rc, sync::Arc};
 use storage::StoredKey;
-use wasm_bindgen::{JsCast, JsValue};
+#[cfg(target_family = "wasm")]
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{Location, MessageEvent};
+#[cfg(not(target_family = "wasm"))]
+use tokio::task::spawn_local;
+use web_sys::{Location, MessageEvent, wasm_bindgen::{JsCast, JsValue}};
 
 pub mod idle_manager;
 pub mod storage;
@@ -483,11 +485,7 @@ impl AuthClient {
                             break;
                         }
 
-                        wasm_timer::Delay::new(std::time::Duration::from_millis(
-                            INTERRUPT_CHECK_INTERVAL,
-                        ))
-                        .await
-                        .unwrap();
+                        sleep(INTERRUPT_CHECK_INTERVAL).await;
                     } else {
                         break;
                     }

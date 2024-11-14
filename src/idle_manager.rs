@@ -196,6 +196,7 @@ impl IdleManagerOptionsBuilder {
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
+    use crate::util::sleep::sleep;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -216,7 +217,7 @@ mod tests {
         assert!(!*callback.borrow());
 
         // Wait for the idle timeout to trigger
-        wasm_timer::Delay::new(std::time::Duration::from_millis(2000)).await.unwrap();
+        sleep(2000).await;
 
         assert!(*callback.borrow());
     }
@@ -237,7 +238,7 @@ mod tests {
 
         assert!(!*callback.borrow());
 
-        wasm_timer::Delay::new(std::time::Duration::from_millis(500)).await.unwrap();
+        sleep(500).await;
 
         // Trigger a mousemove event
         let window = web_sys::window().unwrap();
@@ -245,12 +246,12 @@ mod tests {
         event.init_event("mousemove");
         window.dispatch_event(&event).unwrap();
 
-        wasm_timer::Delay::new(std::time::Duration::from_millis(700)).await.unwrap();
+        sleep(700).await;
 
         assert!(!*callback.borrow());
 
         // Wait for the idle timeout to trigger
-        wasm_timer::Delay::new(std::time::Duration::from_millis(500)).await.unwrap();
+        sleep(500).await;
 
         assert!(*callback.borrow());
     }
@@ -278,7 +279,7 @@ mod tests {
         event.init_event("scroll");
 
         for _ in 0..7 {
-            wasm_timer::Delay::new(std::time::Duration::from_millis(200)).await.unwrap();
+            sleep(200).await;
             window.dispatch_event(&event).unwrap();
         }
 
@@ -308,11 +309,11 @@ mod tests {
 
         assert!(!*callback.borrow());
 
-        wasm_timer::Delay::new(std::time::Duration::from_millis(1200)).await.unwrap();
+        sleep(1200).await;
 
         assert!(!*callback.borrow());
 
-        wasm_timer::Delay::new(std::time::Duration::from_millis(700)).await.unwrap();
+        sleep(700).await;
 
         assert!(*callback.borrow());
     }
