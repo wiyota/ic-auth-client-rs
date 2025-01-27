@@ -24,7 +24,7 @@ crate-type = ["rlib"]
 ic-agent = { version = "0.39", default-features = false }
 base64 = "0.22"
 ed25519-consensus = "2.1"
-getrandom = { version = "0.2", optional = true }
+getrandom = { version = "0.3", optional = true }
 gloo-events = "0.2"
 gloo-timers = "0.3"
 gloo-utils = "0.2"
