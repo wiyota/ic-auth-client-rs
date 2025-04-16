@@ -1,0 +1,24 @@
+[package]
+publish = false
+name = "domain"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+candid = { workspace = true, optional = true }
+derive_more = { version = "2", features = [
+    "as_ref",
+    "display",
+    "from",
+    "from_str",
+] }
+ic-stable-structures = { workspace = true, optional = true }
+serde.workspace = true
+thiserror = "2.0"
+
+[features]
+default = ["value-object"]
+dto = []
+entity = ["dto"]
+ic-stable = ["ic-stable-structures"]
+value-object = ["candid"]
