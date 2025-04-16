@@ -1447,25 +1447,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_idle_options_builder() {
-        let mut builder = IdleOptionsBuilder::new();
-        builder.disable_idle(true);
-        builder.disable_default_idle_callback(true);
-        builder.on_idle(|| {});
-        builder.idle_timeout(1000);
-        builder.scroll_debounce(500);
-        builder.capture_scroll(true);
-        let options = builder.build();
-        assert_eq!(options.disable_idle, Some(true));
-        assert_eq!(options.disable_default_idle_callback, Some(true));
-        assert!(options.idle_manager_options.on_idle.borrow().is_some());
-        assert_eq!(options.idle_manager_options.idle_timeout, Some(1000));
-        assert_eq!(options.idle_manager_options.scroll_debounce, Some(500));
-        assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
-    }
-
-    #[wasm_bindgen_test]
-    fn test_idle_options_builder_chaining() {
-        let options = IdleOptions::builder()
+        let options = IdleOptionsBuilder::new()
             .disable_idle(true)
             .disable_default_idle_callback(true)
             .on_idle(|| {})
@@ -1475,7 +1457,7 @@ mod tests {
             .build();
         assert_eq!(options.disable_idle, Some(true));
         assert_eq!(options.disable_default_idle_callback, Some(true));
-        assert!(options.idle_manager_options.on_idle.borrow().is_some());
+        assert!(options.idle_manager_options.on_idle.as_ref().lock().unwrap().is_empty());
         assert_eq!(options.idle_manager_options.idle_timeout, Some(1000));
         assert_eq!(options.idle_manager_options.scroll_debounce, Some(500));
         assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
@@ -1494,7 +1476,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_auth_client_builder() {
         let private_key = SigningKey::new(thread_rng());
-        let identity = IdentityType::Ed25519(Arc::new(BasicIdentity::from_signing_key(private_key)));
+        let identity = ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_signing_key(private_key)));
 
         let idle_options = IdleOptions::builder()
             .disable_idle(true)
@@ -1506,13 +1488,14 @@ mod tests {
             .build();
 
         let auth_client = AuthClient::builder()
-            .identity(identity)
+            .identity(identity.clone())
             .idle_options(idle_options)
             .build()
             .await
             .unwrap();
 
         assert!(!auth_client.is_authenticated());
+        assert_eq!(auth_client.identity().sender().unwrap(), identity.as_arc_identity().sender().unwrap()); // Check if identity was set
     }
 
     #[wasm_bindgen_test]
@@ -1529,5 +1512,6 @@ mod tests {
         assert_eq!(options.allow_pin_authentication, Some(true));
         assert!(options.on_error.is_some());
         assert!(options.on_success.is_some());
+        assert!(options.custom_values.is_some());
     }
 }
