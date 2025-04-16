@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.4.0-alpha] - 2025-04-16
+
+### Added
+
+- `AuthClient` and `IdleManager` are now thread-safe.
+
+### Changed
+
+- **(Breaking)** Updated `ic-agent` dependency to **v0.40**.
+  This version is **not** compatible with previous versions.
+
+### Removed
+
+- **(Breaking)** Removed `IdentityType`.
+  Use `ArcIdentity` as a replacement.
+
+### Refactored
+
+- **(Breaking)** Reorganized some internal build patterns.
+  These changes may impact specific build or integration scenarios.
+
 ## [0.3.1] - 2024-11-14
 
 - Relaxed version specification of dependencies.
