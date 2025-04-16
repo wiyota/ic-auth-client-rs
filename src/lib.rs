@@ -1067,48 +1067,65 @@ impl AuthClientBuilder {
     }
 }
 
-/// Enum representing the different types of identity to use as the base.
 #[derive(Clone)]
-pub enum IdentityType {
-    Anonymous(AnonymousIdentity),
-    Ed25519(Arc<BasicIdentity>),
-    Delegated(Arc<DelegatedIdentity>),
-}
-
-impl From<IdentityType> for ArcIdentityType {
-    fn from(id: IdentityType) -> Self {
-        match id {
-            IdentityType::Anonymous(id) => ArcIdentityType::Anonymous(Arc::new(id)),
-            IdentityType::Ed25519(id) => ArcIdentityType::Ed25519(id),
-            IdentityType::Delegated(id) => ArcIdentityType::Delegated(id),
-        }
-    }
-}
-
-#[derive(Clone)]
-enum ArcIdentityType {
+pub enum ArcIdentity {
     Anonymous(Arc<AnonymousIdentity>),
     Ed25519(Arc<BasicIdentity>),
     Delegated(Arc<DelegatedIdentity>),
 }
 
-impl ArcIdentityType {
+impl Default for ArcIdentity {
+    fn default() -> Self {
+        ArcIdentity::Anonymous(Arc::new(AnonymousIdentity))
+    }
+}
+
+impl fmt::Debug for ArcIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArcIdentity::Anonymous(_) => write!(f, "ArcIdentity::Anonymous"),
+            ArcIdentity::Ed25519(_) => write!(f, "ArcIdentity::Ed25519"),
+            ArcIdentity::Delegated(_) => write!(f, "ArcIdentity::Delegated"),
+        }
+    }
+}
+
+impl ArcIdentity {
     fn as_arc_identity(&self) -> Arc<dyn Identity> {
         match self {
-            ArcIdentityType::Anonymous(id) => id.clone(),
-            ArcIdentityType::Ed25519(id) => id.clone(),
-            ArcIdentityType::Delegated(id) => id.clone(),
+            ArcIdentity::Anonymous(id) => id.clone(),
+            ArcIdentity::Ed25519(id) => id.clone(),
+            ArcIdentity::Delegated(id) => id.clone(),
         }
     }
 
     fn public_key(&self) -> Option<Vec<u8>> {
         match self {
-            ArcIdentityType::Anonymous(id) => id.public_key(),
-            ArcIdentityType::Ed25519(id) => id.public_key(),
-            ArcIdentityType::Delegated(id) => id.public_key(),
+            ArcIdentity::Anonymous(id) => id.public_key(),
+            ArcIdentity::Ed25519(id) => id.public_key(),
+            ArcIdentity::Delegated(id) => id.public_key(),
         }
     }
 }
+
+impl From<AnonymousIdentity> for ArcIdentity {
+    fn from(identity: AnonymousIdentity) -> Self {
+        ArcIdentity::Anonymous(Arc::new(identity))
+    }
+}
+
+impl From<BasicIdentity> for ArcIdentity {
+    fn from(identity: BasicIdentity) -> Self {
+        ArcIdentity::Ed25519(Arc::new(identity))
+    }
+}
+
+impl From<DelegatedIdentity> for ArcIdentity {
+    fn from(identity: DelegatedIdentity) -> Self {
+        ArcIdentity::Delegated(Arc::new(identity))
+    }
+}
+
 /// Options for the [`AuthClient::login_with_options`].
 #[derive(Clone, Default)]
 pub struct AuthClientLoginOptions {
@@ -1258,10 +1275,10 @@ impl AuthClientLoginOptionsBuilder {
 }
 
 /// Options for creating a new [`AuthClient`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AuthClientCreateOptions {
     /// An optional identity to use as the base. If not provided, an `Ed25519` key pair will be used.
-    pub identity: Option<IdentityType>,
+    pub identity: Option<ArcIdentity>,
     /// Optional storage with get, set, and remove methods. Currentry only `LocalStorage` is supported.
     pub storage: Option<AuthClientStorageType>,
     /// The type of key to use for the base key. If not provided, `Ed25519` will be used by default.
