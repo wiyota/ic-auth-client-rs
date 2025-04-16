@@ -976,10 +976,10 @@ impl AuthClient {
 /// Builder for the [`AuthClient`].
 #[derive(Default)]
 pub struct AuthClientBuilder {
-    identity: Option<IdentityType>,
+    identity: Option<ArcIdentity>,
     storage: Option<AuthClientStorageType>,
     key_type: Option<BaseKeyType>,
-    idle_options: IdleOptions,
+    idle_options: Option<IdleOptions>,
 }
 
 impl AuthClientBuilder {
@@ -989,78 +989,106 @@ impl AuthClientBuilder {
     }
 
     /// An optional identity to use as the base. If not provided, an `Ed25519` key pair will be used.
-    pub fn identity(&mut self, identity: IdentityType) -> &mut Self {
+    pub fn identity(mut self, identity: ArcIdentity) -> Self {
         self.identity = Some(identity);
         self
     }
 
     /// Optional storage with get, set, and remove methods. Currentry only `LocalStorage` is supported.
-    pub fn storage(&mut self, storage: AuthClientStorageType) -> &mut Self {
+    pub fn storage(mut self, storage: AuthClientStorageType) -> Self {
         self.storage = Some(storage);
         self
     }
 
     /// The type of key to use for the base key. If not provided, `Ed25519` will be used by default.
-    pub fn key_type(&mut self, key_type: BaseKeyType) -> &mut Self {
+    pub fn key_type(mut self, key_type: BaseKeyType) -> Self {
         self.key_type = Some(key_type);
         self
     }
 
     /// Options for handling idle timeouts. If not provided, default options will be used.
-    pub fn idle_options(&mut self, idle_options: IdleOptions) -> &mut Self {
-        self.idle_options = idle_options;
+    pub fn idle_options(mut self, idle_options: IdleOptions) -> Self {
+        self.idle_options = Some(idle_options);
         self
     }
 
+    // --- Methods to configure IdleOptions directly on the builder ---
+
+    /// Helper to get mutable access to idle_options, creating default if None.
+    fn idle_options_mut(&mut self) -> &mut IdleOptions {
+        self.idle_options.get_or_insert_with(IdleOptions::default)
+    }
+
     /// If set to `true`, disables the idle timeout functionality.
-    pub fn disable_idle(&mut self, disable_idle: bool) -> &mut Self {
-        self.idle_options.disable_idle = Some(disable_idle);
+    pub fn disable_idle(mut self, disable_idle: bool) -> Self {
+        self.idle_options_mut().disable_idle = Some(disable_idle);
         self
     }
 
     /// If set to `true`, disables the default idle timeout callback.
-    pub fn disable_default_idle_callback(&mut self, disable_default_idle_callback: bool) -> &mut Self {
-        self.idle_options.disable_default_idle_callback = Some(disable_default_idle_callback);
+    pub fn disable_default_idle_callback(mut self, disable_default_idle_callback: bool) -> Self {
+        self.idle_options_mut().disable_default_idle_callback = Some(disable_default_idle_callback);
         self
     }
 
     /// Options for the [`IdleManager`] that handles idle timeouts.
-    pub fn idle_manager_options(&mut self, idle_manager_options: IdleManagerOptions) -> &mut Self {
-        self.idle_options.idle_manager_options = idle_manager_options;
+    pub fn idle_manager_options(mut self, idle_manager_options: IdleManagerOptions) -> Self {
+        self.idle_options_mut().idle_manager_options = idle_manager_options;
         self
     }
 
     /// A callback function to be executed when the system becomes idle.
-    pub fn on_idle(&mut self, on_idle: fn()) -> &mut Self {
-        self.idle_options.idle_manager_options.on_idle = Rc::new(RefCell::new(Some(Box::new(on_idle) as Box<dyn FnMut()>)));
+    /// Note: This replaces any existing callbacks. Use `add_on_idle` for multiple.
+    pub fn on_idle(mut self, on_idle: fn()) -> Self {
+        self.idle_options_mut().idle_manager_options.on_idle = Arc::new(Mutex::new(vec![Box::new(on_idle) as Box<dyn FnMut() + Send>]));
+        self
+    }
+
+    /// Adds a callback function to be executed when the system becomes idle.
+    pub fn add_on_idle<F>(mut self, on_idle: F) -> Self
+    where
+        F: FnMut() + Send + 'static,
+    {
+        let options = self.idle_options_mut();
+        // Ensure the Arc<Mutex<Vec>> exists
+        if Arc::strong_count(&options.idle_manager_options.on_idle) == 0 {
+             // This case should ideally not happen if initialized correctly, but handle defensively
+             options.idle_manager_options.on_idle = Arc::new(Mutex::new(Vec::new()));
+        }
+        // Add the new callback
+        if let Ok(mut guard) = options.idle_manager_options.on_idle.lock() {
+            guard.push(Box::new(on_idle));
+        } else {
+             eprintln!("Failed to lock on_idle callbacks to add new one.");
+        }
         self
     }
 
     /// The duration of inactivity after which the system is considered idle.
-    pub fn idle_timeout(&mut self, idle_timeout: u32) -> &mut Self {
-        self.idle_options.idle_manager_options.idle_timeout = Some(idle_timeout);
+    pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
+        self.idle_options_mut().idle_manager_options.idle_timeout = Some(idle_timeout);
         self
     }
 
     /// A delay for debouncing scroll events.
-    pub fn scroll_debounce(&mut self, scroll_debounce: u32) -> &mut Self {
-        self.idle_options.idle_manager_options.scroll_debounce = Some(scroll_debounce);
+    pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
+        self.idle_options_mut().idle_manager_options.scroll_debounce = Some(scroll_debounce);
         self
     }
 
     /// A flag indicating whether to capture scroll events.
-    pub fn capture_scroll(&mut self, capture_scroll: bool) -> &mut Self {
-        self.idle_options.idle_manager_options.capture_scroll = Some(capture_scroll);
+    pub fn capture_scroll(mut self, capture_scroll: bool) -> Self {
+        self.idle_options_mut().idle_manager_options.capture_scroll = Some(capture_scroll);
         self
     }
 
     /// Builds a new [`AuthClient`].
-    pub async fn build(&mut self) -> Result<AuthClient, DelegationError> {
+    pub async fn build(self) -> Result<AuthClient, DelegationError> {
         let options = AuthClientCreateOptions {
-            identity: mem::take(&mut self.identity),
-            storage: mem::take(&mut self.storage),
-            key_type: mem::take(&mut self.key_type),
-            idle_options: Some(mem::take(&mut self.idle_options)),
+            identity: self.identity,
+            storage: self.storage,
+            key_type: self.key_type,
+            idle_options: self.idle_options,
         };
 
         AuthClient::new_with_options(options).await
@@ -1288,7 +1316,7 @@ pub struct AuthClientCreateOptions {
 }
 
 /// Options for handling idle timeouts.
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct IdleOptions {
     /// If set to `true`, disables the idle timeout functionality.
     pub disable_idle: Option<bool>,
@@ -1322,53 +1350,73 @@ impl IdleOptionsBuilder {
     }
 
     /// If set to `true`, disables the idle timeout functionality.
-    pub fn disable_idle(&mut self, disable_idle: bool) -> &mut Self {
+    pub fn disable_idle(mut self, disable_idle: bool) -> Self {
         self.disable_idle = Some(disable_idle);
         self
     }
 
     /// If set to `true`, disables the default idle timeout callback.
-    pub fn disable_default_idle_callback(&mut self, disable_default_idle_callback: bool) -> &mut Self {
+    pub fn disable_default_idle_callback(mut self, disable_default_idle_callback: bool) -> Self {
         self.disable_default_idle_callback = Some(disable_default_idle_callback);
         self
     }
 
     /// Options for the [`IdleManager`] that handles idle timeouts.
-    pub fn idle_manager_options(&mut self, idle_manager_options: IdleManagerOptions) -> &mut Self {
+    pub fn idle_manager_options(mut self, idle_manager_options: IdleManagerOptions) -> Self {
         self.idle_manager_options = idle_manager_options;
         self
     }
 
     /// A callback function to be executed when the system becomes idle.
-    pub fn on_idle(&mut self, on_idle: fn()) -> &mut Self {
-        self.idle_manager_options.on_idle = Rc::new(RefCell::new(Some(Box::new(on_idle) as Box<dyn FnMut()>)));
+    /// Note: This replaces any existing callbacks. Use `add_on_idle` for multiple.
+    pub fn on_idle(mut self, on_idle: fn()) -> Self {
+        self.idle_manager_options.on_idle = Arc::new(Mutex::new(vec![Box::new(on_idle) as Box<dyn FnMut() + Send>]));
+        self
+    }
+
+    /// Adds a callback function to be executed when the system becomes idle.
+    pub fn add_on_idle<F>(mut self, on_idle: F) -> Self
+    where
+        F: FnMut() + Send + 'static,
+    {
+        // Ensure the Arc<Mutex<Vec>> exists
+        if Arc::strong_count(&self.idle_manager_options.on_idle) == 0 {
+             // This case should ideally not happen if initialized correctly, but handle defensively
+             self.idle_manager_options.on_idle = Arc::new(Mutex::new(Vec::new()));
+        }
+        // Add the new callback
+        if let Ok(mut guard) = self.idle_manager_options.on_idle.lock() {
+            guard.push(Box::new(on_idle));
+        } else {
+             eprintln!("Failed to lock on_idle callbacks to add new one.");
+        }
         self
     }
 
     /// The duration of inactivity after which the system is considered idle.
-    pub fn idle_timeout(&mut self, idle_timeout: u32) -> &mut Self {
+    pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
         self.idle_manager_options.idle_timeout = Some(idle_timeout);
         self
     }
 
     /// A delay for debouncing scroll events.
-    pub fn scroll_debounce(&mut self, scroll_debounce: u32) -> &mut Self {
+    pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
         self.idle_manager_options.scroll_debounce = Some(scroll_debounce);
         self
     }
 
     /// A flag indicating whether to capture scroll events.
-    pub fn capture_scroll(&mut self, capture_scroll: bool) -> &mut Self {
+    pub fn capture_scroll(mut self, capture_scroll: bool) -> Self {
         self.idle_manager_options.capture_scroll = Some(capture_scroll);
         self
     }
 
     /// Build the [`IdleOptions`].
-    pub fn build(&mut self) -> IdleOptions {
+    pub fn build(self) -> IdleOptions {
         IdleOptions {
-            disable_idle: mem::take(&mut self.disable_idle),
-            disable_default_idle_callback: mem::take(&mut self.disable_default_idle_callback),
-            idle_manager_options: mem::take(&mut self.idle_manager_options),
+            disable_idle: self.disable_idle,
+            disable_default_idle_callback: self.disable_default_idle_callback,
+            idle_manager_options: self.idle_manager_options,
         }
     }
 }
