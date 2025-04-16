@@ -1,6 +1,6 @@
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
 use ed25519_consensus::{SigningKey, Error as Ed25519Error};
-use std::{cell::RefCell, future::Future, rc::Rc};
+use std::future::Future;
 use web_sys::{wasm_bindgen::JsValue, Storage};
 
 /// A key for storing the identity key pair.
@@ -63,21 +63,15 @@ pub trait AuthClientStorage {
 }
 
 /// Implementation of [`AuthClientStorage`].
-#[derive(Debug, Default, Clone)]
-pub struct LocalStorage {
-    local_storage: Option<Storage>,
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LocalStorage;
 
 impl LocalStorage {
-    pub fn new(local_storage: Option<Storage>) -> Self {
-        LocalStorage { local_storage }
+    pub fn new() -> Self {
+        LocalStorage
     }
 
     fn get_local_storage(&self) -> Result<Storage, JsValue> {
-        if let Some(local_storage) = self.local_storage.clone() {
-            return Ok(local_storage);
-        }
-
         if let Some(window) = web_sys::window() {
             let local_storage = window.local_storage()?;
             local_storage.ok_or("Could not find local storage.".into())
@@ -111,12 +105,12 @@ impl AuthClientStorage for LocalStorage {
 /// Enum for selecting the type of storage to use for [`AuthClient`](super::AuthClient).
 #[derive(Debug, Clone)]
 pub enum AuthClientStorageType {
-    LocalStorage(Rc<RefCell<LocalStorage>>),
+    LocalStorage(LocalStorage),
 }
 
 impl Default for AuthClientStorageType {
     fn default() -> Self {
-        AuthClientStorageType::LocalStorage(Rc::new(RefCell::new(LocalStorage::new(None))))
+        AuthClientStorageType::LocalStorage(LocalStorage::new())
     }
 }
 
@@ -124,7 +118,6 @@ impl AuthClientStorage for AuthClientStorageType {
     async fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
         match self {
             AuthClientStorageType::LocalStorage(storage) => {
-                let mut storage = storage.borrow_mut().clone();
                 storage.get(key).await
             }
         }
@@ -133,7 +126,6 @@ impl AuthClientStorage for AuthClientStorageType {
     async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) {
         match self {
             AuthClientStorageType::LocalStorage(storage) => {
-                let mut storage = storage.borrow_mut().clone();
                 storage.set(key, value).await
             }
         }
@@ -142,7 +134,6 @@ impl AuthClientStorage for AuthClientStorageType {
     async fn remove<T: AsRef<str>>(&mut self, key: T) {
         match self {
             AuthClientStorageType::LocalStorage(storage) => {
-                let mut storage = storage.borrow_mut().clone();
                 storage.remove(key).await
             }
         }
@@ -168,7 +159,7 @@ mod tests {
     #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_local_storage() {
-        let mut storage = LocalStorage::default();
+        let mut storage = LocalStorage;
         storage.set("test", "value").await;
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));
@@ -180,7 +171,7 @@ mod tests {
     #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_auth_client_storage_type() {
-        let mut storage = AuthClientStorageType::LocalStorage(Rc::new(RefCell::new(LocalStorage::default())));
+        let mut storage = AuthClientStorageType::LocalStorage(LocalStorage);
         storage.set("test", "value").await;
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));

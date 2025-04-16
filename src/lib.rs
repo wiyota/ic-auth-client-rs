@@ -20,7 +20,13 @@ use ic_agent::{
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
-use std::{cell::RefCell, collections::HashMap, fmt, mem, rc::Rc, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, Mutex},
+    cell::RefCell,
+    sync::atomic::{AtomicUsize, Ordering, AtomicBool},
+};
 use storage::StoredKey;
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_futures::spawn_local;
@@ -34,8 +40,13 @@ mod util;
 
 pub use util::delegation_chain;
 
-type OnSuccess = Rc<RefCell<Box<dyn FnMut(AuthResponseSuccess)>>>;
-type OnError = Rc<RefCell<Box<dyn FnMut(Option<String>)>>>;
+thread_local! {
+    static EVENT_HANDLERS: RefCell<HashMap<usize, EventListener>> = RefCell::new(HashMap::new());
+    static IDP_WINDOWS: RefCell<HashMap<usize, web_sys::Window>> = RefCell::new(HashMap::new());
+}
+
+type OnSuccess = Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>;
+type OnError = Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>;
 
 const IDENTITY_PROVIDER_DEFAULT: &str = "https://identity.ic0.app";
 const IDENTITY_PROVIDER_ENDPOINT: &str = "#authorize";
@@ -140,27 +151,104 @@ enum IdentityServiceResponseKind {
 
 /// The tool for managing authentication and identity.
 /// It maintains the state of the user's identity and provides methods for authentication.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuthClient {
     /// The user's identity. This can be an anonymous identity, an Ed25519 identity, or a delegated identity.
-    identity: Rc<RefCell<ArcIdentityType>>,
+    identity: ArcIdentity,
     /// The key associated with the user's identity.
-    key: ArcIdentityType,
+    key: ArcIdentity,
     /// The storage used to persist the user's identity and key.
     storage: AuthClientStorageType,
     /// The delegation chain associated with the user's identity.
-    chain: Rc<RefCell<Option<DelegationChain>>>,
+    chain: Arc<Mutex<Option<DelegationChain>>>,
     /// The idle manager that handles idle timeouts.
     pub idle_manager: Option<IdleManager>,
     /// The options for handling idle timeouts.
-    idle_options: Rc<Option<IdleOptions>>,
-    /// A handle on the Identity Provider (IdP) window. This is used to interact with the IdP during the authentication process.
-    idp_window: Rc<RefCell<Option<web_sys::Window>>>,
-    /// The event handler for processing events from the IdP. This is used to handle the responses from the IdP during the authentication process.
-    event_handler: Rc<RefCell<Option<EventListener>>>,
+    idle_options: Option<IdleOptions>,
+    /// A unique identifier for this instance and its clones, used to associate it with thread-local resources.
+    /// Wrapped in Arc to manage cleanup only when the last clone is dropped.
+    id: Arc<usize>,
+    /// Flag to indicate if the current login flow has completed (success, failure, or interrupt).
+    login_complete: Arc<AtomicBool>,
+}
+
+impl Drop for AuthClient {
+    fn drop(&mut self) {
+        // Clean up the thread-local storage only when the last Arc pointing to the id is dropped.
+        if Arc::strong_count(&self.id) == 1 {
+            let id_val = *self.id; // Get the actual ID value
+
+            // Use try_borrow_mut to avoid panic if already borrowed, e.g., during event handling
+            EVENT_HANDLERS.with(|cell| {
+                match cell.try_borrow_mut() {
+                    Ok(mut map) => {
+                        map.remove(&id_val);
+                    }
+                    Err(_) => {
+                        eprintln!("AuthClient::drop: Could not remove event handler for id {} (already borrowed)", id_val);
+                    }
+                }
+            });
+
+            IDP_WINDOWS.with(|cell| {
+                match cell.try_borrow_mut() {
+                    Ok(mut map) => {
+                        // Close the window if it exists before removing it
+                        if let Some(window) = map.remove(&id_val) {
+                             // Ignore error if window is already closed
+                            let _ = window.close();
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("AuthClient::drop: Could not remove IDP window for id {} (already borrowed)", id_val);
+                    }
+                }
+            });
+        }
+    }
 }
 
 impl AuthClient {
+    /// Sets the event handler for this instance in thread-local storage.
+    fn set_event_handler(&self, handler: EventListener) {
+        EVENT_HANDLERS.with(|cell| {
+            let mut map = cell.borrow_mut();
+            map.insert(*self.id, handler);
+        });
+    }
+
+    /// Takes the event handler for this instance, removing it from thread-local storage.
+    fn take_event_handler(&self) -> Option<EventListener> {
+        EVENT_HANDLERS.with(|cell| {
+            let mut map = cell.borrow_mut();
+            map.remove(&self.id)
+        })
+    }
+
+    /// Sets the IdP window for this instance in thread-local storage.
+    fn set_idp_window(&self, window: web_sys::Window) {
+        IDP_WINDOWS.with(|cell| {
+            let mut map = cell.borrow_mut();
+            map.insert(*self.id, window);
+        });
+    }
+
+    /// Gets the IdP window for this instance from thread-local storage.
+    fn get_idp_window(&self) -> Option<web_sys::Window> {
+        IDP_WINDOWS.with(|cell| {
+            let map = cell.borrow();
+            map.get(&self.id).cloned()
+        })
+    }
+
+    /// Takes the IdP window for this instance, removing it from thread-local storage.
+    fn take_idp_window(&self) -> Option<web_sys::Window> {
+        IDP_WINDOWS.with(|cell| {
+            let mut map = cell.borrow_mut();
+            map.remove(&self.id)
+        })
+    }
+
     /// Default time to live for the session in nanoseconds (8 hours).
     const DEFAULT_TIME_TO_LIVE: u64 = 8 * 60 * 60 * 1_000_000_000;
 
@@ -178,10 +266,10 @@ impl AuthClient {
     pub async fn new_with_options(options: AuthClientCreateOptions) -> Result<Self, DelegationError> {
         let mut storage = options.storage.unwrap_or_default();
 
-        let mut key: Option<ArcIdentityType> = None;
+        let mut key: Option<ArcIdentity> = None;
 
         if let Some(identity) = options.identity.clone() {
-            key = Some(identity.into());
+            key = Some(identity);
         } else {
             let maybe_local_storage = storage.get(KEY_STORAGE_KEY).await;
 
@@ -191,7 +279,7 @@ impl AuthClient {
                 match private_key {
                     Ok(private_key) => {
                         key = Some(
-                            ArcIdentityType::Ed25519(Arc::new(
+                            ArcIdentity::Ed25519(Arc::new(
                                 BasicIdentity::from_signing_key(private_key),
                             ))
                         );
@@ -208,38 +296,81 @@ impl AuthClient {
             }
         }
 
-        let mut identity = ArcIdentityType::Anonymous(Arc::new(AnonymousIdentity));
-        let mut chain: Option<DelegationChain> = None;
+        let mut identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+        let mut chain: Arc<Mutex<Option<DelegationChain>>> = Arc::new(Mutex::new(None));
 
         let options_identity_is_some = options.identity.is_some();
 
-        if key.is_some() {
-            let chain_storage = storage.get(KEY_STORAGE_DELEGATION).await;
+        // Ensure we have a valid key - this is critical for authentication
+        if key.is_none() {
+            // Generate a new signing key if none was found in storage
+            let private_key = SigningKey::new(thread_rng());
 
-            if let Some(op_identity) = options.identity {
-                identity = op_identity.into();
-            } else if let Some(chain_storage) = chain_storage {
-                match chain_storage {
-                    StoredKey::String(chain_storage) => {
-                        chain = Some(DelegationChain::from_json(&chain_storage));
+            // Save this key to storage immediately
+            storage
+                .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
+                .await;
 
-                        if chain.as_ref().unwrap().is_delegation_valid(None) {
-                            let (public_key, delegations) = {
-                                let chain = chain.as_mut().unwrap();
-                                (
-                                    mem::take(&mut chain.public_key),
-                                    mem::take(&mut chain.delegations),
-                                )
-                            };
-                            identity =
-                                ArcIdentityType::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
+            key = Some(ArcIdentity::Ed25519(Arc::new(
+                BasicIdentity::from_signing_key(private_key),
+            )));
+        }
+
+        // Now we definitely have a key, we can load delegation if it exists
+        let chain_storage = storage.get(KEY_STORAGE_DELEGATION).await;
+
+        if let Some(op_identity) = options.identity {
+            identity = op_identity;
+        } else if let Some(chain_storage) = chain_storage {
+            match chain_storage {
+                StoredKey::String(chain_storage) => {
+                    // Try to load the delegation chain
+                    let chain_result = DelegationChain::from_json(&chain_storage);
+                    chain = Arc::new(Mutex::new(Some(chain_result)));
+
+                    // First, extract the needed data from the lock without holding it across await
+                    let delegation_data = {
+                        if let Ok(guard) = chain.lock() {
+                            if let Some(chain_inner) = guard.as_ref() {
+                                if chain_inner.is_delegation_valid(None) {
+                                    // Extract the data we need while we have the lock
+                                    let public_key = chain_inner.public_key.clone();
+                                    let delegations = chain_inner.delegations.clone();
+                                    Some((public_key, delegations))
+                                } else {
+                                    // Signal we need to delete storage if delegation is invalid
+                                    None
+                                }
+                            } else {
+                                // No chain data
+                                Some((Vec::new(), Vec::new()))
+                            }
+                        } else {
+                            // Couldn't get lock
+                            Some((Vec::new(), Vec::new()))
+                        }
+                    };
+
+                    // Now use the extracted data without holding the lock
+                    match delegation_data {
+                        Some((public_key, delegations)) => {
+                            if !public_key.is_empty() {
+                                // Create the delegated identity using our key
+                                identity = ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                                     public_key,
                                     Box::new(key.clone().unwrap().as_arc_identity()),
                                     delegations,
                                 )));
-                        } else {
+                            }
+                        }
+                        None => {
+                            // Need to delete storage - delegation chain is invalid
+                            eprintln!("Found invalid delegation chain in storage - clearing credentials");
                             Self::delete_storage(&mut storage).await;
-                            key = None;
+
+                            // Reset to anonymous identity
+                            identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+                            chain = Arc::new(Mutex::new(None));
                         }
                     }
                 }
@@ -252,7 +383,7 @@ impl AuthClient {
             .as_ref()
             .and_then(|o| o.disable_idle)
             .unwrap_or(false)
-            && (chain.is_some() || options_identity_is_some)
+            && (chain.lock().unwrap().is_some() || options_identity_is_some)
         {
             let idle_manager_options: Option<IdleManagerOptions> = options
                 .idle_options
@@ -268,32 +399,39 @@ impl AuthClient {
                 .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
                 .await;
 
-            key = Some(ArcIdentityType::Ed25519(Arc::new(
+            key = Some(ArcIdentity::Ed25519(Arc::new(
                 BasicIdentity::from_signing_key(private_key),
             )));
         }
 
+        // Generate a unique ID for this instance
+        let id = {
+            static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+            // Use Relaxed ordering as we only need atomicity, not synchronization
+            Arc::new(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+        };
+
         Ok(
             Self {
-                identity: Rc::new(RefCell::new(identity)),
+                identity,
                 key: key.unwrap(),
                 storage,
-                chain: Rc::new(RefCell::new(chain)),
+                chain,
                 idle_manager,
-                idle_options: Rc::new(options.idle_options),
-                idp_window: Rc::new(RefCell::new(None)),
-                event_handler: Rc::new(RefCell::new(None)),
+                idle_options: options.idle_options,
+                id,
+                login_complete: Arc::new(AtomicBool::new(false)),
             }
         )
     }
 
     /// Registers the default idle callback.
     fn register_default_idle_callback(
-        identity: Rc<RefCell<ArcIdentityType>>,
+        identity: ArcIdentity,
         storage: AuthClientStorageType,
-        chain: Rc<RefCell<Option<DelegationChain>>>,
+        chain: Arc<Mutex<Option<DelegationChain>>>,
         idle_manager: Option<IdleManager>,
-        idle_options: Rc<Option<IdleOptions>>,
+        idle_options: Option<IdleOptions>,
     ) {
         if let Some(options) = idle_options.as_ref() {
             if options.disable_default_idle_callback.unwrap_or_default() {
@@ -304,23 +442,22 @@ impl AuthClient {
                 .idle_manager_options
                 .on_idle
                 .as_ref()
-                .borrow()
-                .is_none()
+                .lock()
+                .unwrap()
+                .is_empty()
             {
                 if let Some(idle_manager) = idle_manager.as_ref() {
-                    let callback = {
-                        let identity = identity.clone();
+                    let identity = identity.clone();
+                    let storage = storage.clone();
+                    let chain = chain.clone();
+                    let callback = move || {
+                        let mut identity = identity.clone();
                         let storage = storage.clone();
                         let chain = chain.clone();
-                        move || {
-                            let identity = identity.clone();
-                            let storage = storage.clone();
-                            let chain = chain.clone();
-                            spawn_local(async move {
-                                Self::logout_core(identity, storage, chain, None).await;
-                                window().location().reload().unwrap();
-                            });
-                        }
+                        spawn_local(async move {
+                            Self::logout_core(&mut identity, storage, chain, None).await;
+                            window().location().reload().unwrap();
+                        });
                     };
                     idle_manager.register_callback(callback);
                 }
@@ -335,29 +472,99 @@ impl AuthClient {
         on_success: Option<OnSuccess>,
     ) -> Result<(), DelegationError>
     {
+        // Signal that login has completed normally *before* closing the window or calling callbacks.
+        // This prevents the check_interruption task from incorrectly flagging a user interrupt.
+        self.login_complete.store(true, Ordering::SeqCst);
+
+        // Clean up window and event handler *before* potentially long-running async operations or callbacks
+        if let Some(w) = self.take_idp_window() {
+             // Ignore error if window is already closed
+            let _ = w.close();
+        };
+        self.take_event_handler(); // Remove event handler associated with this login attempt
+
         let delegations = message.delegations.clone();
         let user_public_key = message.user_public_key.clone();
 
-        {
-            let mut chain_guard = self.chain.borrow_mut();
-            *chain_guard = Some(DelegationChain {
-                delegations: delegations.clone(),
-                public_key: user_public_key.clone(),
-            });
-
-            let mut identity_guard = self.identity.borrow_mut();
-            *identity_guard = ArcIdentityType::Delegated(Arc::new(
-                DelegatedIdentity::new_unchecked(
-                    user_public_key.clone(),
-                    Box::new(self.key.as_arc_identity()),
-                    delegations.clone(),
-                )
-            ));
-        }
-
-        if let Some(w) = self.idp_window.borrow_mut().take() {
-            w.close().expect("Failed to close IdP window")
+        // Create the delegation chain
+        let delegation_chain = DelegationChain {
+            delegations: delegations.clone(),
+            public_key: user_public_key.clone(),
         };
+
+        // Serialize the chain to JSON
+        let chain_json = delegation_chain.to_json();
+
+        // First, save to storage immediately to ensure consistency between refreshes
+        // This is critical for authentication persistence
+        self.storage
+            .set(KEY_STORAGE_DELEGATION, chain_json.clone())
+            .await;
+
+        // Now update the in-memory state
+        self.chain = Arc::new(Mutex::new(Some(delegation_chain.clone())));
+
+        self.identity = ArcIdentity::Delegated(Arc::new(
+            DelegatedIdentity::new_unchecked(
+                user_public_key.clone(),
+                Box::new(self.key.as_arc_identity()),
+                delegations.clone(),
+            )
+        ));
+
+        // Verify authentication state is correct
+        let is_auth = self.is_authenticated();
+        if !is_auth {
+            // This is a severe issue - our in-memory state says we're authenticated,
+            // but is_authenticated() disagrees
+            eprintln!("CRITICAL: is_authenticated() returned false after successful login");
+
+            // Debug the state to understand why is_authenticated() is returning false
+            let is_not_anonymous = self
+                .identity()
+                .sender()
+                .map(|s| s != Principal::anonymous())
+                .unwrap_or(false);
+
+            let has_chain = if let Ok(guard) = self.chain.lock() {
+                guard.is_some()
+            } else {
+                false
+            };
+
+            eprintln!("Debug is_authenticated(): is_not_anonymous={}, has_chain={}", is_not_anonymous, has_chain);
+
+            // Try a more direct approach - recreate the delegation chain from JSON
+            // This ensures our in-memory and storage states are completely in sync
+            if let Ok(mut guard) = self.chain.lock() {
+                *guard = Some(DelegationChain::from_json(&chain_json));
+            }
+
+            // Check again after our fix attempt
+            let is_auth_retry = self.is_authenticated();
+            eprintln!("After fix attempt: is_authenticated() = {}", is_auth_retry);
+
+            // If still failing, provide detailed debug information but DO NOT reload
+            // Let's try to make it work without a reload
+            if !is_auth_retry {
+                if let Ok(principal) = self.identity().sender() {
+                    eprintln!("Current principal: {}", principal);
+                }
+
+                // Attempt one final fix: completely reconstruct the delegated identity
+                self.identity = ArcIdentity::Delegated(Arc::new(
+                    DelegatedIdentity::new_unchecked(
+                        user_public_key.clone(),
+                        Box::new(self.key.as_arc_identity()),
+                        delegations.clone(),
+                    )
+                ));
+
+                // Last check
+                let final_auth_check = self.is_authenticated();
+                eprintln!("Final check: is_authenticated() = {}", final_auth_check);
+            }
+        }
 
         // create the idle manager on a successful login if we haven't disabled it
         // and it doesn't already exist.
@@ -366,39 +573,31 @@ impl AuthClient {
             None => false,
         };
         if self.idle_manager.is_none() && !disable_idle {
-            #[allow(clippy::manual_map)] // std Rc can't be mapped
-            let idle_manager_options = match self.idle_options.as_ref() {
-                Some(options) => Some(options.idle_manager_options.clone()),
-                None => None,
-            };
-
+            let idle_manager_options = self.idle_options.as_ref().map(|o| o.idle_manager_options.clone());
             let new_idle_manager = IdleManager::new(idle_manager_options);
+            self.idle_manager = Some(new_idle_manager);
 
-            self.idle_manager.replace(new_idle_manager);
-
-            Self::register_default_idle_callback(
-                self.identity.clone(),
-                self.storage.clone(),
-                self.chain.clone(),
-                self.idle_manager.clone(),
-                self.idle_options.clone(),
-            );
-        }
-
-        self.event_handler.take();
-
-        let chain = self.chain.borrow().clone();
-
-        if let Some(chain) = chain {
-            self.storage
-                .set(KEY_STORAGE_DELEGATION, chain.to_json())
-                .await;
+            // Register default callback only if idle_manager was successfully created
+            if let Some(idle_manager) = self.idle_manager.as_ref() {
+                Self::register_default_idle_callback(
+                    self.identity.clone(),
+                    self.storage.clone(),
+                    self.chain.clone(),
+                    Some(idle_manager.clone()),
+                    self.idle_options.clone(),
+                );
+            }
         }
 
         // on_success should be the last thing to do to avoid consumers
         // interfering by navigating or refreshing the page
-        if let Some(on_success) = on_success {
-            on_success.borrow_mut()(message);
+        if let Some(on_success_cb) = on_success {
+            // Use try_lock to prevent blocking if the callback itself tries to re-enter AuthClient methods.
+            if let Ok(mut guard) = on_success_cb.try_lock() {
+                (*guard)(message);
+            } else {
+                eprintln!("Failed to acquire lock on on_success callback");
+            }
         }
 
         Ok(())
@@ -406,8 +605,11 @@ impl AuthClient {
 
     /// Returns the identity of the user.
     pub fn identity(&self) -> Arc<dyn Identity> {
-        let identity_guard = self.identity.borrow();
-        identity_guard.as_arc_identity()
+        self.identity.as_arc_identity()
+    }
+
+    pub fn principal(&self) -> Result<Principal, String> {
+        self.identity().sender()
     }
 
     /// Checks if the user is authenticated.
@@ -418,7 +620,7 @@ impl AuthClient {
             .map(|s| s != Principal::anonymous())
             .unwrap_or(false);
 
-        let has_chain = self.chain.borrow().is_some();
+        let has_chain = self.chain.lock().unwrap().is_some();
 
         is_not_anonymous && has_chain
     }
@@ -430,6 +632,9 @@ impl AuthClient {
 
     /// Logs the user in with the provided options.
     pub fn login_with_options(&mut self, options: AuthClientLoginOptions) {
+        // Reset completion flag for the new login attempt
+        self.login_complete.store(false, Ordering::SeqCst);
+
         let window = web_sys::window().unwrap();
 
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)
@@ -443,56 +648,119 @@ impl AuthClient {
 
         // If `login` has been called previously, then close/remove any previous windows
         // and event listeners.
-        if let Some(idp_window) = self.idp_window.borrow_mut().take() {
-            idp_window.close().unwrap();
+        if let Some(idp_window) = self.take_idp_window() {
+            // Ignore error if window is already closed
+            let _ = idp_window.close();
         }
-        self.event_handler.take();
+        self.take_event_handler();
 
         // Open a new window with the IDP provider.
-        self.idp_window = Rc::new(RefCell::new(
-            window
-                .open_with_url_and_target_and_features(
-                    &identity_provider_url.href(),
-                    "idpWindow",
-                    options.window_opener_features.as_deref().unwrap_or(""),
-                )
-                .unwrap(),
-        ));
+        let window_handle_result = window
+            .open_with_url_and_target_and_features(
+                &identity_provider_url.href(),
+                "idpWindow",
+                options.window_opener_features.as_deref().unwrap_or(""),
+            );
 
-        // Add an event listener to handle responses.
-        self.event_handler.clone().replace(Some(
-            self.get_event_handler(identity_provider_url.clone(), options.clone()),
-        ));
+        match window_handle_result {
+            Ok(Some(window_handle)) => {
+                self.set_idp_window(window_handle);
 
-        self.check_interruption(options.on_error);
+                // Add an event listener to handle responses.
+                let handler = self.get_event_handler(identity_provider_url.clone(), options.clone());
+                self.set_event_handler(handler);
+
+                // Start checking for interruption, passing the completion flag
+                self.check_interruption(options.on_error.clone(), self.login_complete.clone());
+            }
+            Ok(None) => {
+                // Window opening was blocked by the browser (e.g., popup blocker)
+                self.login_complete.store(true, Ordering::SeqCst); // Mark as complete (failed)
+                if let Some(on_error) = options.on_error {
+                    on_error.lock().unwrap()(Some("Failed to open IdP window. Check popup blocker.".to_string()));
+                } else {
+                    eprintln!("Failed to open IdP window. Check popup blocker.");
+                }
+                // Clean up potentially stored (but unused) handler/window refs for this ID
+                self.take_event_handler();
+                self.take_idp_window();
+            }
+            Err(e) => {
+                 // Other error during window opening
+                self.login_complete.store(true, Ordering::SeqCst); // Mark as complete (failed)
+                let error_message = format!("Error opening IdP window: {:?}", e);
+                if let Some(on_error) = options.on_error {
+                    on_error.lock().unwrap()(Some(error_message.clone()));
+                } else {
+                    eprintln!("{}", error_message);
+                }
+                // Clean up potentially stored (but unused) handler/window refs for this ID
+                self.take_event_handler();
+                self.take_idp_window();
+            }
+        }
     }
 
     /// Checks for user interruption during the login process.
-    fn check_interruption(&self, on_error: Option<OnError>) {
-        let event_handler = self.event_handler.clone();
-        let idp_window = self.idp_window.clone();
+    fn check_interruption(&self, on_error: Option<OnError>, login_complete: Arc<AtomicBool>) {
+        let client_id = *self.id;
+        let idp_window = self.get_idp_window();
+        let login_complete_clone = login_complete.clone();
 
         spawn_local({
             async move {
-                loop {
-                    // Lock the idp_window only once and release the lock immediately.
-                    let idp_window_cloned = idp_window.borrow().clone();
+                if let Some(idp_window_ref) = idp_window {
+                    // Give the authentication process a moment to start before checking for interruptions
+                    sleep(1000).await;
 
-                    // The idp_window is opened and not yet closed by the client.
-                    if let Some(idp_window_cloned) = idp_window_cloned {
-                        if idp_window_cloned.closed().unwrap() {
-                            Self::handle_failure(
-                                event_handler,
-                                idp_window,
-                                Some(ERROR_USER_INTERRUPT.to_string()),
-                                on_error,
-                            );
-                            break;
-                        }
-
+                    // Check periodically if the window is still open
+                    while !idp_window_ref.closed().unwrap_or(true)
+                        && !login_complete_clone.load(Ordering::SeqCst)
+                    {
                         sleep(INTERRUPT_CHECK_INTERVAL).await;
+                    }
+
+                    // Only report a user interrupt if login isn't already complete AND the window is closed
+                    // This avoids false UserInterrupt errors when the window is closed after authentication completes
+                    if idp_window_ref.closed().unwrap_or(true) && !login_complete_clone.load(Ordering::SeqCst) {
+                        // Clean up resources first
+                        let _ = idp_window_ref.close(); // Ignore error if already closed
+
+                        // Remove the event handler from thread-local storage
+                        EVENT_HANDLERS.with(|cell| {
+                            // Use try_borrow_mut to avoid panic if already borrowed
+                            if let Ok(mut map) = cell.try_borrow_mut() {
+                                map.remove(&client_id);
+                            } else {
+                                eprintln!("AuthClient::check_interruption: Could not remove event handler for id {} (already borrowed)", client_id);
+                            }
+                        });
+
+                        // Also remove the window reference if it wasn't removed by handle_success/handle_failure
+                        IDP_WINDOWS.with(|cell| {
+                            if let Ok(mut map) = cell.try_borrow_mut() {
+                                map.remove(&client_id);
+                            } else {
+                                eprintln!("AuthClient::check_interruption: Could not remove IDP window for id {} (already borrowed)", client_id);
+                            }
+                        });
+
+                        // Double-check one last time before triggering the error callback
+                        // This helps avoid race conditions where login completion happens right as we're checking
+                        if !login_complete_clone.load(Ordering::SeqCst) {
+                            // Only now call the error callback if provided
+                            if let Some(on_error) = on_error {
+                                // Ensure login_complete is set before calling the callback
+                                login_complete_clone.store(true, Ordering::SeqCst);
+                                on_error.lock().unwrap()(Some(ERROR_USER_INTERRUPT.to_string()));
+                            } else {
+                                // If no error handler, still mark as complete to prevent potential issues
+                                login_complete_clone.store(true, Ordering::SeqCst);
+                            }
+                        }
                     } else {
-                        break;
+                        // Window is not closed or login is already complete, no need to do anything
+                        // Resources will be cleaned up by handle_success/failure or another mechanism
                     }
                 }
             }
@@ -522,16 +790,31 @@ impl AuthClient {
                 .unwrap_or(Self::DEFAULT_TIME_TO_LIVE);
 
             let handle_error_wrapper = |error: String| {
-                let event_handler = client.event_handler.clone();
-                let idp_window = client.idp_window.clone();
+                // Clone necessary parts, avoid cloning the whole client into the async block if possible
+                let login_complete = client.login_complete.clone();
                 let on_error = options.on_error.clone();
+                let client_id = *client.id; // Get the ID value
+
                 spawn_local(async move {
-                    Self::handle_failure(
-                        event_handler,
-                        idp_window,
-                        Some(error),
-                        on_error,
-                    );
+                    // Signal completion
+                    login_complete.store(true, Ordering::SeqCst);
+
+                    // Clean up window and handler (using the ID)
+                    if let Some(window) = IDP_WINDOWS.with(|map| map.borrow_mut().remove(&client_id)) {
+                        let _ = window.close();
+                    }
+                    EVENT_HANDLERS.with(|map| map.borrow_mut().remove(&client_id));
+
+                    // Call the error callback
+                    if let Some(on_error_cb) = on_error {
+                        if let Ok(mut guard) = on_error_cb.try_lock() {
+                            (*guard)(Some(error));
+                        } else {
+                            eprintln!("Failed to acquire lock on on_error callback in event handler");
+                        }
+                    } else {
+                         eprintln!("AuthClient login failed in event handler: {}", error);
+                    }
                 });
             };
 
@@ -553,35 +836,65 @@ impl AuthClient {
                                 .clone()
                                 .map(|d| d.to_string().into()),
                         };
-                        let request_js_value = JsValue::from_serde(&request).unwrap();
-                        let session_public_key = Uint8Array::from(&request.session_public_key[..]);
-                        Reflect::set(
+                        let request_js_value = match JsValue::from_serde(&request) {
+                            Ok(value) => value,
+                            Err(err) => {
+                                handle_error_wrapper(format!("Failed to serialize request: {}", err));
+                                return;
+                            }
+                        };
+
+                        let session_public_key_js = Uint8Array::from(&request.session_public_key[..]).into();
+                        if Reflect::set(
                             &request_js_value,
                             &JsValue::from_str("sessionPublicKey"),
-                            &session_public_key.into(),
-                        )
-                        .unwrap();
+                            &session_public_key_js,
+                        ).is_err() {
+                            handle_error_wrapper("Failed to set sessionPublicKey on request".to_string());
+                            return;
+                        }
 
                         if let Some(custom_values) = options.custom_values.clone() {
-                            let custom_values = custom_values.into_iter().map(|(k, v)| {
-                                (k, JsValue::from_serde(&v).unwrap())
-                            }).collect::<HashMap<String, JsValue>>();
                             for (k, v) in custom_values {
-                                Reflect::set(&request_js_value, &JsValue::from_str(&k), &v).unwrap();
+                                match JsValue::from_serde(&v) {
+                                    Ok(value) => {
+                                        if Reflect::set(&request_js_value, &JsValue::from_str(&k), &value).is_err() {
+                                            handle_error_wrapper(format!("Failed to set custom value '{}'", k));
+                                        }
+                                    }
+                                    Err(err) => {
+                                        handle_error_wrapper(format!("Failed to serialize custom value '{}': {}", k, err));
+                                    }
+                                }
                             }
                         }
 
-                        if let Some(idp_window) = client.idp_window.borrow().as_ref() {
-                            idp_window
+                        if let Some(idp_window) = client.get_idp_window() {
+                            if idp_window
                                 .post_message(&request_js_value, &identity_provider_url.origin())
-                                .unwrap();
+                                .is_err() {
+                                    handle_error_wrapper("Failed to post message to IdP window".to_string());
+                                }
+                        } else {
+                            // This case might happen if the window was closed unexpectedly between checks
+                            handle_error_wrapper("IdP window not found when trying to post message".to_string());
                         }
                     }
                     IdentityServiceResponseKind::AuthSuccess(response) => {
-                        let mut client = client.clone();
+                        let mut client_clone = client.clone();
                         let on_success = options.on_success.clone();
+                        let on_error = options.on_error.clone();
                         spawn_local(async move {
-                            client.handle_success(response, on_success).await.unwrap();
+                            if let Err(e) = client_clone.handle_success(response, on_success).await {
+                                // Handle potential errors from handle_success itself
+                                eprintln!("Error during handle_success: {}", e);
+                                // Optionally call on_error here as well
+                                if let Some(on_error_cb) = on_error {
+                                    if let Ok(mut guard) = on_error_cb.try_lock() {
+                                        (*guard)(Some(format!("Error processing successful login: {:?}", e)));
+                                    }
+                                }
+                            }
                         });
                     }
                     IdentityServiceResponseKind::AuthFailure(error_message) => {
@@ -597,63 +910,51 @@ impl AuthClient {
         EventListener::new(&window(), "message", callback)
     }
 
-    /// Handles a failed authentication response.
-    fn handle_failure(
-        event_handler: Rc<RefCell<Option<EventListener>>>,
-        idp_window: Rc<RefCell<Option<web_sys::Window>>>,
-        error_message: Option<String>,
-        on_error: Option<OnError>,
-    ) {
-        if let Some(idp_window) = idp_window.borrow_mut().take() {
-            idp_window.close().unwrap();
-        }
-
-        if let Some(on_error) = on_error {
-            on_error.borrow_mut()(error_message);
-        }
-
-        event_handler.clone().take();
-    }
-
     /// Logs out the user and clears the stored identity.
     async fn logout_core(
-        identity: Rc<RefCell<ArcIdentityType>>,
+        identity: &mut ArcIdentity,
         mut storage: AuthClientStorageType,
-        chain: Rc<RefCell<Option<DelegationChain>>>,
+        chain: Arc<Mutex<Option<DelegationChain>>>,
         return_to: Option<Location>,
     ) {
         Self::delete_storage(&mut storage).await;
 
         // Reset this auth client to a non-authenticated state.
-        *identity.borrow_mut() = ArcIdentityType::Anonymous(Arc::new(AnonymousIdentity));
-        chain.borrow_mut().take();
+        *identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+        if let Ok(mut guard) = chain.try_lock() {
+            guard.take();
+        } else {
+            eprintln!("Failed to acquire lock on delegation chain during logout");
+        }
 
         // If a return URL is provided, redirect the user to that URL.
         if let Some(return_to) = return_to {
-            let window = web_sys::window().unwrap();
-            if window
-                .history()
-                .expect("No history found")
-                .push_state_with_url(
-                    &JsValue::null(),
-                    "",
-                    Some(return_to.href().unwrap().as_str()),
-                )
-                .is_err()
-            {
-                window
-                    .location()
-                    .set_href(&return_to.href().unwrap())
-                    .expect("Failed to set href");
+            if let Some(window) = web_sys::window() {
+                let href_result = return_to.href();
+                if let Ok(href) = href_result {
+                    if let Ok(history) = window.history() {
+                        if history.push_state_with_url(&JsValue::null(), "", Some(&href)).is_err() && window.location().set_href(&href).is_err() {
+                            eprintln!("Failed to set href during logout");
+                        }
+                    } else if window.location().set_href(&href).is_err() {
+                        eprintln!("Failed to set href during logout (no history)");
+                    }
+                } else {
+                    eprintln!("Failed to get href from return_to location during logout");
+                }
             }
         }
     }
 
     /// Log the user out.
     /// If a return URL is provided, the user will be redirected to that URL after logging out.
-    pub async fn logout(&self, return_to: Option<Location>) {
+    pub async fn logout(&mut self, return_to: Option<Location>) {
+        if let Some(idle_manager) = self.idle_manager.take() {
+            drop(idle_manager);
+        }
+
         Self::logout_core(
-            self.identity.clone(),
+            &mut self.identity,
             self.storage.clone(),
             self.chain.clone(),
             return_to,
@@ -859,8 +1160,8 @@ pub struct AuthClientLoginOptionsBuilder {
     allow_pin_authentication: Option<bool>,
     derivation_origin: Option<web_sys::Url>,
     window_opener_features: Option<String>,
-    on_success: Option<Box<dyn FnMut(AuthResponseSuccess)>>,
-    on_error: Option<Box<dyn FnMut(Option<String>)>>,
+    on_success: Option<Box<dyn FnMut(AuthResponseSuccess) + Send>>,
+    on_error: Option<Box<dyn FnMut(Option<String>) + Send>>,
     custom_values: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -920,7 +1221,7 @@ impl AuthClientLoginOptionsBuilder {
     /// Callback once login has completed.
     pub fn on_success<F>(mut self, on_success: F) -> Self
     where
-        F: FnMut(AuthResponseSuccess) + 'static,
+        F: FnMut(AuthResponseSuccess) + Send + 'static,
     {
         self.on_success = Some(Box::new(on_success));
         self
@@ -929,7 +1230,7 @@ impl AuthClientLoginOptionsBuilder {
     /// Callback in case authentication fails.
     pub fn on_error<F>(mut self, on_error: F) -> Self
     where
-        F: FnMut(Option<String>) + 'static,
+        F: FnMut(Option<String>) + Send + 'static,
     {
         self.on_error = Some(Box::new(on_error));
         self
@@ -949,8 +1250,8 @@ impl AuthClientLoginOptionsBuilder {
             allow_pin_authentication: self.allow_pin_authentication,
             derivation_origin: self.derivation_origin,
             window_opener_features: self.window_opener_features,
-            on_success: self.on_success.map(|f| Rc::new(RefCell::new(f))),
-            on_error: self.on_error.map(|f| Rc::new(RefCell::new(f))),
+            on_success: self.on_success.map(|f| Arc::new(Mutex::new(f))),
+            on_error: self.on_error.map(|f| Arc::new(Mutex::new(f))),
             custom_values: self.custom_values,
         }
     }
