@@ -9,7 +9,6 @@ use crate::{
     },
     util::{delegation_chain::DelegationChain, sleep::sleep},
 };
-use ed25519_consensus::SigningKey;
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
@@ -17,7 +16,7 @@ use ic_agent::{
     identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, SignedDelegation, DelegationError},
     Identity,
 };
-use rand::thread_rng;
+use ic_ed25519::PrivateKey;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{
@@ -156,7 +155,7 @@ pub struct AuthClient {
     /// The user's identity. This can be an anonymous identity, an Ed25519 identity, or a delegated identity.
     identity: ArcIdentity,
     /// The key associated with the user's identity.
-    key: ArcIdentity,
+    key: Key,
     /// The storage used to persist the user's identity and key.
     storage: AuthClientStorageType,
     /// The delegation chain associated with the user's identity.
@@ -263,38 +262,32 @@ impl AuthClient {
     }
 
     /// Creates a new [`AuthClient`] with the provided options.
-    pub async fn new_with_options(options: AuthClientCreateOptions) -> Result<Self, DelegationError> {
+    pub async fn new_with_options(
+        options: AuthClientCreateOptions,
+    ) -> Result<Self, DelegationError> {
         let mut storage = options.storage.unwrap_or_default();
+        let options_identity_is_some = options.identity.is_some();
 
-        let mut key: Option<ArcIdentity> = None;
-
-        if let Some(identity) = options.identity.clone() {
-            key = Some(identity);
-        } else {
-            let maybe_local_storage = storage.get(KEY_STORAGE_KEY).await;
-
-            if let Some(maybe_local_storage) = maybe_local_storage {
-                let private_key = maybe_local_storage.decode();
-
-                match private_key {
-                    Ok(private_key) => {
-                        key = Some(
-                            ArcIdentity::Ed25519(Arc::new(
-                                BasicIdentity::from_signing_key(private_key),
-                            ))
-                        );
-                    }
-                    Err(e) => {
-                        return Err(
-                            DelegationError::IdentityError(format!(
-                                "Failed to decode private key: {}",
-                                e
-                            ))
-                        );
-                    }
+        let key = match options.identity {
+            Some(identity) => Key::Identity(identity),
+            None => {
+                if let Some(stored_key) = storage.get(KEY_STORAGE_KEY).await {
+                    let private_key = stored_key.decode().map_err(|e| {
+                        DelegationError::IdentityError(format!(
+                            "Failed to decode private key: {}",
+                            e
+                        ))
+                    })?;
+                    Key::WithRaw(KeyWithRaw::new(private_key))
+                } else {
+                    let private_key = PrivateKey::generate().serialize_raw();
+                    let _ = storage
+                        .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
+                        .await;
+                    Key::WithRaw(KeyWithRaw::new(private_key))
                 }
             }
-        }
+        };
 
         let mut identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
         let mut chain: Arc<Mutex<Option<DelegationChain>>> = Arc::new(Mutex::new(None));
@@ -392,18 +385,6 @@ impl AuthClient {
             idle_manager = Some(IdleManager::new(idle_manager_options));
         }
 
-        if key.is_none() {
-            let private_key = SigningKey::new(thread_rng());
-
-            storage
-                .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
-                .await;
-
-            key = Some(ArcIdentity::Ed25519(Arc::new(
-                BasicIdentity::from_signing_key(private_key),
-            )));
-        }
-
         // Generate a unique ID for this instance
         let id = {
             static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -414,7 +395,6 @@ impl AuthClient {
         Ok(
             Self {
                 identity,
-                key: key.unwrap(),
                 storage,
                 chain,
                 idle_manager,
@@ -423,6 +403,7 @@ impl AuthClient {
                 login_complete: Arc::new(AtomicBool::new(false)),
             }
         )
+            key,
     }
 
     /// Registers the default idle callback.
@@ -491,6 +472,13 @@ impl AuthClient {
             delegations: delegations.clone(),
             public_key: user_public_key.clone(),
         };
+
+        if let Key::WithRaw(key) = &self.key {
+            let _ = self
+                .storage
+                .set(KEY_STORAGE_KEY, StoredKey::encode(key.raw_key()))
+                .await;
+        }
 
         // Serialize the chain to JSON
         let chain_json = delegation_chain.to_json();
@@ -1092,6 +1080,62 @@ impl AuthClientBuilder {
         };
 
         AuthClient::new_with_options(options).await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct KeyWithRaw {
+    key: [u8; 32],
+    identity: ArcIdentity,
+}
+
+impl KeyWithRaw {
+    pub fn new(raw_key: [u8; 32]) -> Self {
+        KeyWithRaw {
+            key: raw_key,
+            identity: ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&raw_key))),
+        }
+    }
+
+    pub fn raw_key(&self) -> &[u8; 32] {
+        &self.key
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Key {
+    WithRaw(KeyWithRaw),
+    Identity(ArcIdentity),
+}
+
+impl Key {
+    pub fn as_arc_identity(&self) -> Arc<dyn Identity> {
+        match self {
+            Key::WithRaw(key) => key.identity.as_arc_identity(),
+            Key::Identity(identity) => identity.as_arc_identity(),
+        }
+    }
+
+    pub fn public_key(&self) -> Option<Vec<u8>> {
+        match self {
+            Key::WithRaw(key) => key.identity.public_key(),
+            Key::Identity(identity) => identity.public_key(),
+        }
+    }
+}
+
+impl From<Key> for ArcIdentity {
+    fn from(key: Key) -> Self {
+        match key {
+            Key::WithRaw(key) => key.identity,
+            Key::Identity(identity) => identity,
+        }
+    }
+}
+
+impl From<ArcIdentity> for Key {
+    fn from(identity: ArcIdentity) -> Self {
+        Key::Identity(identity)
     }
 }
 

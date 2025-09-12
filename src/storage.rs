@@ -1,5 +1,4 @@
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
-use ed25519_consensus::{SigningKey, Error as Ed25519Error};
 use std::future::Future;
 use web_sys::{wasm_bindgen::JsValue, Storage};
 
@@ -18,18 +17,22 @@ pub enum StoredKey {
 }
 
 impl StoredKey {
-    pub fn decode(&self) -> Result<SigningKey, DecodeError> {
+    pub fn decode(&self) -> Result<[u8; 32], DecodeError> {
         match self {
             StoredKey::String(s) => {
-                let bytes = BASE64_STANDARD_NO_PAD.decode(s).map_err(DecodeError::Base64)?;
-                let bytes: [u8; 32] = bytes.try_into().map_err(|_| DecodeError::Ed25519(Ed25519Error::InvalidSliceLength))?;
-                Ok(SigningKey::from(bytes))
-            },
+                let bytes = BASE64_STANDARD_NO_PAD
+                    .decode(s)
+                    .map_err(DecodeError::Base64)?;
+                let bytes: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| DecodeError::Ed25519("Invalid slice length".to_string()))?;
+                Ok(bytes)
+            }
         }
     }
 
-    pub fn encode(key: &SigningKey) -> String {
-        BASE64_STANDARD_NO_PAD.encode(key.as_bytes())
+    pub fn encode(key: &[u8; 32]) -> String {
+        BASE64_STANDARD_NO_PAD.encode(key)
     }
 }
 
@@ -42,7 +45,7 @@ impl From<String> for StoredKey {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DecodeError {
     #[error("Ed25519 error: {0}")]
-    Ed25519(Ed25519Error),
+    Ed25519(String),
     #[error("Base64 error: {0}")]
     Base64(base64::DecodeError),
 }
