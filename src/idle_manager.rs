@@ -1,13 +1,23 @@
-use std::{mem, sync::{Arc, Mutex}};
-use wasm_bindgen::{prelude::*, closure::Closure};
-use web_sys::{Window, Event};
 use std::sync::mpsc;
+use std::{
+    mem,
+    sync::{Arc, Mutex},
+};
+use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
+use web_sys::{Event, Window};
 
 type Callback = Box<dyn FnMut() + Send>;
 type JsCallback = Closure<dyn FnMut(Event)>;
 
-const EVENTS: [&str; 6] = ["load", "mousedown", "mousemove", "keydown", "touchstart", "wheel"];
+const EVENTS: [&str; 6] = [
+    "load",
+    "mousedown",
+    "mousemove",
+    "keydown",
+    "touchstart",
+    "wheel",
+];
 
 /// The relevant state of JavaScript
 struct JsContext {
@@ -35,10 +45,7 @@ impl JsContext {
     fn remove_all_listeners(&mut self) {
         for (event_type, handler) in self.event_handlers.drain(..) {
             self.window
-                .remove_event_listener_with_callback(
-                    &event_type,
-                    handler.as_ref().unchecked_ref()
-                )
+                .remove_event_listener_with_callback(&event_type, handler.as_ref().unchecked_ref())
                 .expect("should remove event listener");
         }
     }
@@ -48,10 +55,11 @@ impl JsContext {
     }
 
     fn set_timeout(&self, closure: &Closure<dyn FnMut()>, timeout: i32) -> Result<i32, JsValue> {
-        self.window.set_timeout_with_callback_and_timeout_and_arguments_0(
-            closure.as_ref().unchecked_ref(),
-            timeout,
-        )
+        self.window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                closure.as_ref().unchecked_ref(),
+                timeout,
+            )
     }
 }
 
@@ -144,7 +152,7 @@ impl JsHandler {
                     // Then send the cleanup message to the handler
                     let _ = sender.send(JsMessage::Cleanup);
                 });
-            },
+            }
             Err(_) => {
                 // If setting timeout fails, drop the closure
                 drop(exit_closure);
@@ -199,7 +207,7 @@ impl JsHandler {
                     // Then send the reset timer message to the handler
                     let _ = sender.send(JsMessage::ResetTimer(0));
                 });
-            },
+            }
             Err(_) => {
                 // If setting timeout fails, drop the closure
                 drop(reset_closure);
@@ -276,11 +284,7 @@ impl IdleManager {
         });
 
         let instance = Self {
-            context: Arc::new(Mutex::new(
-                Context {
-                    callbacks,
-                }
-            )),
+            context: Arc::new(Mutex::new(Context { callbacks })),
             idle_timeout,
             js_sender,
         };
@@ -311,7 +315,9 @@ impl IdleManager {
 
         if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
             let sender = self.js_sender.clone();
-            let scroll_debounce = options.as_ref().and_then(|options| options.scroll_debounce)
+            let scroll_debounce = options
+                .as_ref()
+                .and_then(|options| options.scroll_debounce)
                 .unwrap_or(Self::DEFAULT_SCROLL_DEBOUNCE);
 
             let callback = Closure::wrap(Box::new(move |_: Event| {
@@ -334,7 +340,11 @@ impl IdleManager {
     where
         F: FnMut() + Send + 'static,
     {
-        self.context.lock().unwrap().callbacks.lock().unwrap().push(Box::new(callback));
+        if let Ok(context) = self.context.lock() {
+            if let Ok(mut callbacks) = context.callbacks.lock() {
+                callbacks.push(Box::new(callback));
+            }
+        }
     }
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
@@ -345,9 +355,12 @@ impl IdleManager {
         }
 
         // Execute callbacks
-        let context = self.context.lock().unwrap();
-        for callback in context.callbacks.lock().unwrap().iter_mut() {
-            (callback)();
+        if let Ok(context) = self.context.lock() {
+            if let Ok(mut callbacks) = context.callbacks.lock() {
+                for callback in callbacks.iter_mut() {
+                    (callback)();
+                }
+            }
         }
     }
 
@@ -357,8 +370,6 @@ impl IdleManager {
             let _ = sender.send(JsMessage::ResetTimer(self.idle_timeout));
         }
     }
-
-
 }
 
 /// IdleManagerOptions is a struct that contains options for configuring an [`IdleManager`].
@@ -376,7 +387,11 @@ pub struct IdleManagerOptions {
 
 impl std::fmt::Debug for IdleManagerOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let callback_count = self.on_idle.lock().unwrap().len();
+        let callback_count = if let Ok(callbacks) = self.on_idle.lock() {
+            callbacks.len()
+        } else {
+            0
+        };
         f.debug_struct("IdleManagerOptions")
             .field("on_idle", &format!("{} callbacks", callback_count))
             .field("idle_timeout", &self.idle_timeout)
@@ -405,7 +420,8 @@ pub struct IdleManagerOptionsBuilder {
 impl IdleManagerOptionsBuilder {
     /// A callback function to be executed when the system becomes idle.
     pub fn on_idle(&mut self, on_idle: fn()) -> &mut Self {
-        self.on_idle.push(Box::new(on_idle) as Box<dyn FnMut() + Send>);
+        self.on_idle
+            .push(Box::new(on_idle) as Box<dyn FnMut() + Send>);
         self
     }
 
@@ -442,16 +458,14 @@ impl IdleManagerOptionsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_bindgen_test::*;
     use crate::util::sleep::sleep;
+    use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
     #[wasm_bindgen_test]
     async fn test_idle_manager() {
-        let options = IdleManagerOptions::builder()
-            .idle_timeout(500)
-            .build();
+        let options = IdleManagerOptions::builder().idle_timeout(500).build();
 
         let idle_manager = IdleManager::new(Some(options));
 
@@ -471,9 +485,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_idle_manager_with_reset_timer() {
-        let options = IdleManagerOptions::builder()
-            .idle_timeout(1000)
-            .build();
+        let options = IdleManagerOptions::builder().idle_timeout(1000).build();
 
         let idle_manager = IdleManager::new(Some(options));
 

@@ -1,6 +1,8 @@
-use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
+use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine as _};
 use std::future::Future;
-use web_sys::{wasm_bindgen::JsValue, Storage};
+#[cfg(feature = "tracing")]
+use tracing::error;
+use web_sys::{Storage, wasm_bindgen::JsValue};
 
 /// A key for storing the identity key pair.
 pub const KEY_STORAGE_KEY: &str = "identity";
@@ -60,9 +62,13 @@ impl From<DecodeError> for JsValue {
 pub trait AuthClientStorage {
     fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;
 
-    fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) -> impl Future<Output = ()>;
+    fn set<S: AsRef<str>, T: AsRef<str>>(
+        &mut self,
+        key: S,
+        value: T,
+    ) -> impl Future<Output = Result<(), ()>>;
 
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = ()>;
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Result<(), ()>>;
 }
 
 /// Implementation of [`AuthClientStorage`].
@@ -74,34 +80,63 @@ impl LocalStorage {
         LocalStorage
     }
 
-    fn get_local_storage(&self) -> Result<Storage, JsValue> {
-        if let Some(window) = web_sys::window() {
-            let local_storage = window.local_storage()?;
-            local_storage.ok_or("Could not find local storage.".into())
-        } else {
-            Err("No window found".into())
+    fn get_local_storage(&self) -> Option<Storage> {
+        match web_sys::window()?.local_storage() {
+            Ok(storage) => storage,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not find local storage: {_e:?}");
+                None
+            }
         }
     }
 }
 
 impl AuthClientStorage for LocalStorage {
     async fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
-        let local_storage = self.get_local_storage().unwrap();
+        let local_storage = self.get_local_storage()?;
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        let value = local_storage.get_item(&key).unwrap();
+        let value = match local_storage.get_item(&key) {
+            Ok(value) => value,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not get item from local storage: {_e:?}");
+                return None;
+            }
+        };
         value.map(StoredKey::String)
     }
 
-    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) {
-        let local_storage = self.get_local_storage().unwrap();
+    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) -> Result<(), ()> {
+        let local_storage = match self.get_local_storage() {
+            Some(local_storage) => local_storage,
+            None => return Err(()),
+        };
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        local_storage.set_item(&key, value.as_ref()).unwrap();
+        match local_storage.set_item(&key, value.as_ref()) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not set item in local storage");
+                Err(())
+            }
+        }
     }
 
-    async fn remove<T: AsRef<str>>(&mut self, key: T) {
-        let local_storage = self.get_local_storage().unwrap();
+    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+        let local_storage = match self.get_local_storage() {
+            Some(local_storage) => local_storage,
+            None => return Err(()),
+        };
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        local_storage.remove_item(&key).unwrap();
+        match local_storage.remove_item(&key) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not remove item from local storage");
+                Err(())
+            }
+        }
     }
 }
 
@@ -120,25 +155,19 @@ impl Default for AuthClientStorageType {
 impl AuthClientStorage for AuthClientStorageType {
     async fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
         match self {
-            AuthClientStorageType::LocalStorage(storage) => {
-                storage.get(key).await
-            }
+            AuthClientStorageType::LocalStorage(storage) => storage.get(key).await,
         }
     }
 
-    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) {
+    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) -> Result<(), ()> {
         match self {
-            AuthClientStorageType::LocalStorage(storage) => {
-                storage.set(key, value).await
-            }
+            AuthClientStorageType::LocalStorage(storage) => storage.set(key, value).await,
         }
     }
 
-    async fn remove<T: AsRef<str>>(&mut self, key: T) {
+    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
         match self {
-            AuthClientStorageType::LocalStorage(storage) => {
-                storage.remove(key).await
-            }
+            AuthClientStorageType::LocalStorage(storage) => storage.remove(key).await,
         }
     }
 }
@@ -146,27 +175,28 @@ impl AuthClientStorage for AuthClientStorageType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ic_ed25519::PrivateKey;
     use wasm_bindgen_test::*;
 
     #[test]
     fn test_stored_key_encode_decode() {
-        let rng = rand::thread_rng();
-        let signing_key = SigningKey::new(rng);
+        let private_key = PrivateKey::generate();
+        let raw_key = private_key.serialize_raw();
 
-        let encoded = StoredKey::encode(&signing_key);
+        let encoded = StoredKey::encode(&raw_key);
         let key = StoredKey::String(encoded);
         let decoded = key.decode().unwrap();
-        assert_eq!(signing_key.as_bytes(), decoded.as_bytes());
+        assert_eq!(raw_key, decoded);
     }
 
     #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_local_storage() {
         let mut storage = LocalStorage;
-        storage.set("test", "value").await;
+        storage.set("test", "value").await.unwrap();
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));
-        storage.remove("test").await;
+        storage.remove("test").await.unwrap();
         let value = storage.get("test").await;
         assert_eq!(value, None);
     }
@@ -175,10 +205,10 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_auth_client_storage_type() {
         let mut storage = AuthClientStorageType::LocalStorage(LocalStorage);
-        storage.set("test", "value").await;
+        storage.set("test", "value").await.unwrap();
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));
-        storage.remove("test").await;
+        storage.remove("test").await.unwrap();
         let value = storage.get("test").await;
         assert_eq!(value, None);
     }
