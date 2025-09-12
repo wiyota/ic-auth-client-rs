@@ -14,7 +14,7 @@ The table below shows the compatible versions of `ic-auth-client` for `ic-agent`
 
 | `ic-agent` version | `ic-auth-client` version |
 | ------------------ | ------------------------ |
-| 0.40.\*            | 0.4.\*                   |
+| 0.44.\*            | 0.4.\*                   |
 | 0.39.\*            | 0.3.\*                   |
 | 0.37.\* or 0.38.\* | 0.1.\* or 0.2.\*         |
 
