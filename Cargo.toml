@@ -3,8 +3,8 @@ name = "ic-auth-client"
 version = "0.4.0-alpha"
 authors = ["Inomoto, Yota <yota@perforate.org>"]
 license = "Apache-2.0"
-edition = "2021"
-rust-version = "1.56.0"
+edition = "2024"
+rust-version = "1.85.0"
 
 description = "A client library for Internet Computer identity authentication services."
 include = ["/src", "/Cargo.toml", "/README.md", "/LICENSE"]
