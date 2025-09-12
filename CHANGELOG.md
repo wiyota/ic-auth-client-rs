@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.4.0] - 2025-09-12
+
+### Changed
+
+- **(Breaking)** Updated `ic-agent` dependency to **v0.44**.
+
+- **(Breaking)** Deprecate the `ed25519-consensus` crate for private keys and use `ic-ed25519` instead.
+
+- Internal values now update correctly upon login/logout, eliminating the need for page refreshes.
+
+- Bump MSRV from `1.56.0` to `1.85.0`.
+
+### Refactored
+
+- Nearly all instances of `unwrap()` have been removed and replaced with error messages via [tracing](https://crates.io/crates/tracing) crate. If debugging is required, use the `tracing` feature and [tracing-wasm](https://crates.io/crates/tracing-wasm) or similar tools depending on your environment.
+
 ## [0.4.0-alpha] - 2025-04-16
 
 ### Added
