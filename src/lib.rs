@@ -153,7 +153,7 @@ enum IdentityServiceResponseKind {
 #[derive(Clone, Debug)]
 pub struct AuthClient {
     /// The user's identity. This can be an anonymous identity, an Ed25519 identity, or a delegated identity.
-    identity: ArcIdentity,
+    identity: Arc<Mutex<ArcIdentity>>,
     /// The key associated with the user's identity.
     key: Key,
     /// The storage used to persist the user's identity and key.
@@ -292,29 +292,10 @@ impl AuthClient {
         let mut identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
         let mut chain: Arc<Mutex<Option<DelegationChain>>> = Arc::new(Mutex::new(None));
 
-        let options_identity_is_some = options.identity.is_some();
-
-        // Ensure we have a valid key - this is critical for authentication
-        if key.is_none() {
-            // Generate a new signing key if none was found in storage
-            let private_key = SigningKey::new(thread_rng());
-
-            // Save this key to storage immediately
-            storage
-                .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
-                .await;
-
-            key = Some(ArcIdentity::Ed25519(Arc::new(
-                BasicIdentity::from_signing_key(private_key),
-            )));
-        }
-
         // Now we definitely have a key, we can load delegation if it exists
         let chain_storage = storage.get(KEY_STORAGE_DELEGATION).await;
 
-        if let Some(op_identity) = options.identity {
-            identity = op_identity;
-        } else if let Some(chain_storage) = chain_storage {
+        if let Some(chain_storage) = chain_storage {
             match chain_storage {
                 StoredKey::String(chain_storage) => {
                     // Try to load the delegation chain
@@ -349,11 +330,13 @@ impl AuthClient {
                         Some((public_key, delegations)) => {
                             if !public_key.is_empty() {
                                 // Create the delegated identity using our key
-                                identity = ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
-                                    public_key,
-                                    Box::new(key.clone().unwrap().as_arc_identity()),
-                                    delegations,
-                                )));
+                                identity = ArcIdentity::Delegated(Arc::new(
+                                    DelegatedIdentity::new_unchecked(
+                                        public_key,
+                                        Box::new(key.clone().as_arc_identity()),
+                                        delegations,
+                                    ),
+                                ));
                             }
                         }
                         None => {
@@ -392,23 +375,21 @@ impl AuthClient {
             Arc::new(NEXT_ID.fetch_add(1, Ordering::Relaxed))
         };
 
-        Ok(
-            Self {
-                identity,
-                storage,
-                chain,
-                idle_manager,
-                idle_options: options.idle_options,
-                id,
-                login_complete: Arc::new(AtomicBool::new(false)),
-            }
-        )
+        Ok(Self {
+            identity: Arc::new(Mutex::new(identity)),
             key,
+            storage,
+            chain,
+            idle_manager,
+            idle_options: options.idle_options,
+            id,
+            login_complete: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Registers the default idle callback.
     fn register_default_idle_callback(
-        identity: ArcIdentity,
+        identity: Arc<Mutex<ArcIdentity>>,
         storage: AuthClientStorageType,
         chain: Arc<Mutex<Option<DelegationChain>>>,
         idle_manager: Option<IdleManager>,
@@ -540,13 +521,19 @@ impl AuthClient {
                 }
 
                 // Attempt one final fix: completely reconstruct the delegated identity
-                self.identity = ArcIdentity::Delegated(Arc::new(
-                    DelegatedIdentity::new_unchecked(
-                        user_public_key.clone(),
-                        Box::new(self.key.as_arc_identity()),
-                        delegations.clone(),
-                    )
-                ));
+                {
+                    if let Ok(mut guard) = self.identity.lock() {
+                        *guard =
+                            ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
+                                user_public_key.clone(),
+                                Box::new(self.key.as_arc_identity()),
+                                delegations.clone(),
+                            )));
+                    } else {
+                        #[cfg(feature = "tracing")]
+                        error!("Failed to acquire lock on identity during final fix attempt");
+                    }
+                }
 
                 // Last check
                 let final_auth_check = self.is_authenticated();
@@ -900,7 +887,7 @@ impl AuthClient {
 
     /// Logs out the user and clears the stored identity.
     async fn logout_core(
-        identity: &mut ArcIdentity,
+        identity: Arc<Mutex<ArcIdentity>>,
         mut storage: AuthClientStorageType,
         chain: Arc<Mutex<Option<DelegationChain>>>,
         return_to: Option<Location>,
@@ -908,11 +895,17 @@ impl AuthClient {
         Self::delete_storage(&mut storage).await;
 
         // Reset this auth client to a non-authenticated state.
-        *identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+        if let Ok(mut guard) = identity.lock() {
+            *guard = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+        } else {
+            #[cfg(feature = "tracing")]
+            error!("Failed to acquire lock on identity during logout");
+        }
         if let Ok(mut guard) = chain.try_lock() {
             guard.take();
         } else {
-            eprintln!("Failed to acquire lock on delegation chain during logout");
+            #[cfg(feature = "tracing")]
+            error!("Failed to acquire lock on delegation chain during logout");
         }
 
         // If a return URL is provided, redirect the user to that URL.
@@ -942,7 +935,7 @@ impl AuthClient {
         }
 
         Self::logout_core(
-            &mut self.identity,
+            self.identity.clone(),
             self.storage.clone(),
             self.chain.clone(),
             return_to,
@@ -1519,8 +1512,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_auth_client_builder() {
-        let private_key = SigningKey::new(thread_rng());
-        let identity = ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_signing_key(private_key)));
+        let private_key = PrivateKey::generate().serialize_raw();
+        let identity = ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&private_key)));
 
         let idle_options = IdleOptions::builder()
             .disable_idle(true)
