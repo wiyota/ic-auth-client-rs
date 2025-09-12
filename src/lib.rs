@@ -570,9 +570,9 @@ impl AuthClient {
                 }
 
                 // Last check
-                let final_auth_check = self.is_authenticated();
+                let _final_auth_check = self.is_authenticated();
                 #[cfg(feature = "tracing")]
-                debug!("Final check: is_authenticated() = {}", final_auth_check);
+                debug!("Final check: is_authenticated() = {}", _final_auth_check);
             }
         }
 
