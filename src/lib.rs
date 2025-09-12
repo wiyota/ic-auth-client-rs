@@ -595,9 +595,17 @@ impl AuthClient {
             .map(|s| s != Principal::anonymous())
             .unwrap_or(false);
 
-        let has_chain = self.chain.lock().unwrap().is_some();
+        let is_valid_chain = if let Ok(chain_guard) = self.chain.lock() {
+            if let Some(chain) = chain_guard.as_ref() {
+                chain.is_delegation_valid(None)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
-        is_not_anonymous && has_chain
+        is_not_anonymous && is_valid_chain
     }
 
     /// Logs the user in with default options.
