@@ -1,9 +1,26 @@
 use candid::CandidType;
-use serde::{Deserialize, Serialize};
 use derive_more::{AsRef, Display, From, FromStr};
+use serde::{Deserialize, Serialize};
 
 /// Identifier for notes should be unique and incrementing
-#[derive(CandidType, Serialize, Deserialize, Debug, Hash, Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, AsRef, Display, From, FromStr)]
+#[derive(
+    CandidType,
+    Serialize,
+    Deserialize,
+    Debug,
+    Hash,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Copy,
+    Clone,
+    AsRef,
+    Display,
+    From,
+    FromStr,
+)]
 pub struct NoteId(u32);
 
 impl NoteId {
@@ -23,8 +40,12 @@ mod ic_stable {
     use std::borrow::Cow;
 
     impl Storable for NoteId {
-        fn to_bytes(&self) -> Cow<[u8]> {
+        fn to_bytes(&'_ self) -> Cow<'_, [u8]> {
             self.0.to_bytes()
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            self.0.into_bytes()
         }
 
         fn from_bytes(bytes: Cow<[u8]>) -> Self {

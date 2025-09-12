@@ -132,9 +132,16 @@ impl Log {
 }
 
 impl Storable for Log {
-    fn to_bytes(&self) -> Cow<[u8]> {
+    fn to_bytes(&'_ self) -> Cow<'_, [u8]> {
         match Encode!(self) {
             Ok(bytes) => Cow::Owned(bytes),
+            Err(e) => panic!("Failed to encode Log: {:?}", e),
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        match Encode!(&self) {
+            Ok(bytes) => bytes,
             Err(e) => panic!("Failed to encode Log: {:?}", e),
         }
     }

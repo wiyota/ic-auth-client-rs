@@ -16,8 +16,12 @@ mod ic_stable {
     use std::borrow::Cow;
 
     impl Storable for NoteDao {
-        fn to_bytes(&self) -> Cow<[u8]> {
+        fn to_bytes(&'_ self) -> Cow<'_, [u8]> {
             Cow::Owned(candid::encode_one(self).expect("Failed to encode NoteDao"))
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            candid::encode_one(self).expect("Failed to encode NoteDao")
         }
 
         fn from_bytes(bytes: Cow<[u8]>) -> Self {

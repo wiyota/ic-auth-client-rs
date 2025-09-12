@@ -1,11 +1,11 @@
 use crate::{
-    contexts::auth::{use_auth, AuthStoreStoreFields},
+    contexts::auth::{AuthStoreStoreFields, use_auth},
     features::{
         note::component::NoteComponent,
         user::account::{LoginButton, LogoutButton},
     },
 };
-use leptos::prelude::*;
+use leptos::{either::Either, prelude::*};
 
 #[component]
 pub fn Route() -> impl IntoView {
@@ -23,21 +23,25 @@ pub fn Route() -> impl IntoView {
                 >
                     {move || {
                         if is_authenticated.get() {
-                            view! {
-                                <div class="flex flex-col gap-2 items-center">
-                                    <p class="text-xs pointer-events-none text-stone-600 dark:text-stone-400">{format!("You're logged in: {}", principal.get().unwrap())}</p>
-                                    <LogoutButton />
-                                </div>
+                            Either::Left(
+                                view! {
+                                    <div class="flex flex-col gap-2 items-center">
+                                        <p class="text-xs pointer-events-none text-stone-600 dark:text-stone-400">{format!("You're logged in: {}", principal.get().unwrap())}</p>
+                                        <LogoutButton />
+                                    </div>
 
-                                <NoteComponent />
-                            }.into_any()
+                                    <NoteComponent />
+                                }
+                            )
                         } else {
-                            view! {
-                                <div class="flex flex-col gap-2 items-center">
-                                    <p class="text-xs pointer-events-none text-stone-600 dark:text-stone-400">"You're NOT logged in"</p>
-                                    <LoginButton />
-                                </div>
-                            }.into_any()
+                            Either::Right(
+                                view! {
+                                    <div class="flex flex-col gap-2 items-center">
+                                        <p class="text-xs pointer-events-none text-stone-600 dark:text-stone-400">"You're NOT logged in"</p>
+                                        <LoginButton />
+                                    </div>
+                                }
+                            )
                         }
                     }}
                 </section>

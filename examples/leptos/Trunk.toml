@@ -4,4 +4,4 @@ dist = "crates/frontend/dist"
 minify = "on_release"
 
 [tools]
-tailwindcss = "2.1.9" # Select the tailwind-cli-extra version to use daisyUI
+tailwindcss = "2.2.9" # Select the tailwind-cli-extra version to use daisyUI

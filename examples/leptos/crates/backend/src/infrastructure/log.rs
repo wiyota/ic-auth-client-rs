@@ -18,13 +18,11 @@ use crate::log::Log;
 /// }
 /// ```
 pub fn append(log: &Log) -> Result<u64, ()> {
-    STATE.with_borrow_mut(|state| {
-        match state.log.append(log) {
-            Ok(idx) => Ok(idx),
-            Err(e) => {
-                ic_cdk::api::print(format!("Error appending log: {:?}", e));
-                Err(())
-            }
+    STATE.with_borrow_mut(|state| match state.log.append(log) {
+        Ok(idx) => Ok(idx),
+        Err(e) => {
+            ic_cdk::api::debug_print(format!("Error appending log: {:?}", e));
+            Err(())
         }
     })
 }

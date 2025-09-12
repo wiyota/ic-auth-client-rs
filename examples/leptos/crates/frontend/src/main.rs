@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_fetch::QueryClient;
 use leptos_meta::*;
 
 mod contexts;
@@ -10,6 +11,8 @@ use routes::AppRouter;
 
 #[component]
 fn App() -> impl IntoView {
+    QueryClient::new().provide();
+
     view! {
         <AppRouter />
     }
@@ -28,6 +31,7 @@ fn Providers() -> impl IntoView {
 
 fn main() {
     console_error_panic_hook::set_once();
+    tracing_wasm::set_as_global_default();
 
     mount_to_body(|| view! { <Providers /> });
 }

@@ -2,29 +2,45 @@
 publish = false
 name = "frontend"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = 2
+
+# For build scripts and proc-macros.
+[profile.dev.build-override]
+opt-level = 3
 
 [profile.release]
 lto = true
 opt-level = "z"
 codegen-units = 1
+strip = true
+target = "wasm32-unknown-unknown"
+panic = "abort"
 
 [dependencies]
 candid.workspace = true
 console_error_panic_hook = "0.1.7"
-domain = { workspace = true, features = ["dto"]}
-dotenvy_macro = "0.15.7"
-futures = "0.3.31"
+domain = { workspace = true, features = ["dto"] }
+futures = { version = "0.3.31", default-features = false }
 getrandom = { version = "0.3", features = ["wasm_js"] }
-ic-agent = { version = "0.40.0", features = ["wasm-bindgen"] }
-ic-auth-client = { path = "../../../../" }
-leptos = { version = "0.7.8", features = ["csr"] }
-leptos_meta = "0.7.8"
-leptos_router = "0.7.8"
-leptos_router_macro = "0.7.8"
-reactive_graph = "0.1.8"
-reactive_stores = "0.1.8"
+ic-agent = { version = "0.44", default-features = false, features = [
+    "wasm-bindgen",
+] }
+ic-auth-client = { path = "../../../../", features = ["tracing"] }
+leptos = { version = "0.8.8", features = ["csr"] }
+leptos-fetch = "0.4.5"
+leptos_meta = "0.8.5"
+leptos_router = "0.8.6"
+reactive_stores = "0.2.5"
 serde.workspace = true
-serde-wasm-bindgen = "0.6.5"
+tracing-wasm = "0.2.1"
 util.workspace = true
 web-sys = { version = "0.3", features = ["Window", "Navigator", "Document"] }

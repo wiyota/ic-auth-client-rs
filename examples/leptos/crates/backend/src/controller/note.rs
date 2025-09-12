@@ -1,9 +1,5 @@
-use domain::note::{
-    repository::NoteRepository,
-    entity::dto::NoteDto,
-    NoteId, NoteTitle,
-};
 use crate::use_case::note::NoteUseCase;
+use domain::note::{entity::dto::Note, repository::NoteRepository, NoteId, NoteTitle};
 
 pub struct NoteController<R: NoteRepository> {
     use_case: NoteUseCase<R>,
@@ -16,11 +12,11 @@ impl<R: NoteRepository> NoteController<R> {
         }
     }
 
-    pub fn get(&self, id: &NoteId) -> Option<NoteDto> {
+    pub fn get(&self, id: &NoteId) -> Option<Note> {
         self.use_case.get(id).map(|note| note.into())
     }
 
-    pub fn set(&mut self, note: NoteDto) {
+    pub fn set(&mut self, note: Note) {
         self.use_case.set(note.into());
     }
 

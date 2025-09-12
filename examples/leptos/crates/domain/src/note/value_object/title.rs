@@ -1,9 +1,23 @@
 use candid::CandidType;
-use serde::{Deserialize, Serialize};
 use derive_more::{AsRef, Display};
+use serde::{Deserialize, Serialize};
 
 /// Title for notes should be 50 characters or less
-#[derive(CandidType, Serialize, Deserialize, Debug, Hash, Default, PartialEq, Eq, PartialOrd, Ord, Clone, AsRef, Display)]
+#[derive(
+    CandidType,
+    Serialize,
+    Deserialize,
+    Debug,
+    Hash,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Clone,
+    AsRef,
+    Display,
+)]
 pub struct NoteTitle(String);
 
 impl NoteTitle {
@@ -27,7 +41,9 @@ impl NoteTitle {
     }
 }
 
-#[derive(thiserror::Error, Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(
+    thiserror::Error, Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy,
+)]
 pub enum NoteTitleError {
     #[error("Title is too long")]
     TooLong,
@@ -40,8 +56,12 @@ mod ic_stable {
     use std::borrow::Cow;
 
     impl Storable for NoteTitle {
-        fn to_bytes(&self) -> Cow<[u8]> {
+        fn to_bytes(&'_ self) -> Cow<'_, [u8]> {
             self.0.to_bytes()
+        }
+
+        fn into_bytes(self) -> Vec<u8> {
+            self.0.into_bytes()
         }
 
         fn from_bytes(bytes: Cow<[u8]>) -> Self {

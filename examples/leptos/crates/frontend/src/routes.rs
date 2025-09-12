@@ -1,6 +1,8 @@
 use leptos::prelude::*;
-use leptos_router::components::{Route, Router, Routes};
-use leptos_router_macro::path;
+use leptos_router::{
+    path,
+    components::{Route, Router, FlatRoutes}
+};
 
 pub mod index;
 
@@ -8,9 +10,9 @@ pub mod index;
 pub fn AppRouter() -> impl IntoView {
     view! {
         <Router>
-            <Routes fallback=|| "This page could not be found.">
+            <FlatRoutes fallback=|| "This page could not be found.">
                 <Route path=path!("/") view=index::Route />
-            </Routes>
+            </FlatRoutes>
         </Router>
     }
 }

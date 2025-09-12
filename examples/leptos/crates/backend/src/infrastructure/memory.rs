@@ -1,10 +1,9 @@
 use crate::log::Log;
 use candid::Principal;
-use domain::note::{NoteId, entity::dao::NoteDao};
+use domain::note::{entity::dao::NoteDao, NoteId};
 use ic_stable_structures::{
-    StableLog, StableBTreeMap,
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
-    DefaultMemoryImpl
+    DefaultMemoryImpl, StableBTreeMap, StableLog,
 };
 use std::cell::RefCell;
 
@@ -25,22 +24,12 @@ pub(super) fn get_upgrades_memory() -> Memory {
 }
 
 pub(super) fn init_stable_log() -> StableLog<Log, Memory, Memory> {
-    let result = StableLog::init(
+    StableLog::init(
         MEMORY_MANAGER.with(|m| m.borrow().get(LOG_INDEX)),
         MEMORY_MANAGER.with(|m| m.borrow().get(LOG_DATA)),
-    );
-
-    match result {
-        Ok(log) => log,
-        Err(e) => {
-            ic_cdk::api::print(format!("Failed to initialize log: {}", e));
-            ic_cdk::trap("Critical error: Failed to initialize stable log");
-        }
-    }
+    )
 }
 
 pub(super) fn init_notes() -> StableBTreeMap<(Principal, NoteId), NoteDao, Memory> {
-    StableBTreeMap::init(
-        MEMORY_MANAGER.with(|m| m.borrow_mut().get(NOTES))
-    )
+    StableBTreeMap::init(MEMORY_MANAGER.with(|m| m.borrow_mut().get(NOTES)))
 }

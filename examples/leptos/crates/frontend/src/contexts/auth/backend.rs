@@ -1,14 +1,14 @@
 use candid::{CandidType, Decode, Encode};
-use domain::note::{entity::Note, NoteId, NoteTitle};
+use domain::note::{NoteId, NoteTitle, entity::Note};
 use futures::channel::oneshot;
-use leptos::task::spawn_local;
 use ic_agent::{Agent, Identity};
-use util::{
-    canister_id::BACKEND,
-    dfx_network::{DfxNetwork, DFX_NETWORK},
-};
+use leptos::task::spawn_local;
 use serde::Deserialize;
 use std::time::Duration;
+use util::{
+    canister_id::BACKEND,
+    dfx_network::{DFX_NETWORK, DfxNetwork},
+};
 
 const TIMEOUT: Duration = Duration::from_secs(60 * 5);
 
@@ -17,18 +17,15 @@ pub struct BackendActor {
     agent: Agent,
 }
 
+#[allow(dead_code)]
 impl BackendActor {
     pub async fn new<T>(identity: T) -> Self
     where
         T: Identity + 'static,
     {
         let url = match *DFX_NETWORK {
-            DfxNetwork::Local => {
-                "http://localhost:4943".to_string()
-            }
-            DfxNetwork::Ic => {
-                "https://ic0.app".to_string()
-            }
+            DfxNetwork::Local => "http://localhost:4943".to_string(),
+            DfxNetwork::Ic => "https://ic0.app".to_string(),
         };
 
         let agent = Agent::builder()
@@ -39,10 +36,7 @@ impl BackendActor {
             .expect("Failed to create agent");
 
         if *DFX_NETWORK == DfxNetwork::Local {
-            agent
-                .fetch_root_key()
-                .await
-                .unwrap();
+            agent.fetch_root_key().await.unwrap();
         }
 
         Self { agent }
@@ -67,7 +61,10 @@ impl BackendActor {
                 .with_arg(arg)
                 .await
                 .unwrap_or_else(|e| {
-                    panic!("Failed to query call: canister_id: {}, method: {}, {:?}", backend, method, e);
+                    panic!(
+                        "Failed to query call: canister_id: {}, method: {}, {:?}",
+                        backend, method, e
+                    );
                 });
 
             let _ = tx.send(result);
@@ -98,7 +95,10 @@ impl BackendActor {
                 .with_arg(arg)
                 .await
                 .unwrap_or_else(|e| {
-                    panic!("Failed to update call: canister_id: {}, method: {}, {:?}", backend, method, e);
+                    panic!(
+                        "Failed to update call: canister_id: {}, method: {}, {:?}",
+                        backend, method, e
+                    );
                 });
 
             let _ = tx.send(result);
