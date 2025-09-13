@@ -14,6 +14,7 @@ use crate::{
     },
     util::{delegation_chain::DelegationChain, sleep::sleep},
 };
+use ed25519_dalek::SigningKey;
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
@@ -23,7 +24,6 @@ use ic_agent::{
         SignedDelegation,
     },
 };
-use ic_ed25519::PrivateKey;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{
@@ -291,7 +291,8 @@ impl AuthClient {
                     })?;
                     Key::WithRaw(KeyWithRaw::new(private_key))
                 } else {
-                    let private_key = PrivateKey::generate().serialize_raw();
+                    let mut rng = rand::thread_rng();
+                    let private_key = SigningKey::generate(&mut rng).to_bytes();
                     let _ = storage
                         .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
                         .await;
@@ -1652,7 +1653,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_auth_client_builder() {
-        let private_key = PrivateKey::generate().serialize_raw();
+        let mut rng = rand::thread_rng();
+        let private_key = SigningKey::generate(&mut rng).to_bytes();
         let identity = ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&private_key)));
 
         let idle_options = IdleOptions::builder()

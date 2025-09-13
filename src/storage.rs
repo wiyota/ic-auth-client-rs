@@ -173,13 +173,14 @@ impl AuthClientStorage for AuthClientStorageType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ic_ed25519::PrivateKey;
+    use ed25519_dalek::SigningKey;
     use wasm_bindgen_test::*;
 
     #[test]
     fn test_stored_key_encode_decode() {
-        let private_key = PrivateKey::generate();
-        let raw_key = private_key.serialize_raw();
+        let mut rng = rand::thread_rng();
+        let signing_key = SigningKey::generate(&mut rng);
+        let raw_key = signing_key.to_bytes();
 
         let encoded = StoredKey::encode(&raw_key);
         let key = StoredKey::String(encoded);
