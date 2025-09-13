@@ -77,6 +77,7 @@ struct Context {
 enum JsMessage {
     ResetTimer(u32),
     Cleanup,
+    CleanupWithCallbacks,
     ScrollDebounce(u32),
 }
 
@@ -121,7 +122,8 @@ impl JsHandler {
         while let Some(msg) = self.receiver.next().await {
             match msg {
                 JsMessage::ResetTimer(timeout) => self.handle_reset_timer(timeout),
-                JsMessage::Cleanup => self.handle_cleanup(),
+                JsMessage::Cleanup => self.handle_cleanup(false),
+                JsMessage::CleanupWithCallbacks => self.handle_cleanup(true),
                 JsMessage::ScrollDebounce(delay) => self.handle_scroll_debounce(delay),
             }
         }
@@ -154,7 +156,10 @@ impl JsHandler {
         });
 
         // Set the timeout with the closure
-        match self.context.set_timeout(&exit_closure, actual_timeout as i32) {
+        match self
+            .context
+            .set_timeout(&exit_closure, actual_timeout as i32)
+        {
             Ok(timer_id) => {
                 self.current_timer = Some(timer_id);
                 self.exit_closure = Some(exit_closure);
@@ -166,7 +171,7 @@ impl JsHandler {
                     if oneshot_receiver.await.is_ok() {
                         // Then send the cleanup message to the handler
                         use futures::SinkExt;
-                        let _ = sender.send(JsMessage::Cleanup).await;
+                        let _ = sender.send(JsMessage::CleanupWithCallbacks).await;
                     }
                 });
             }
@@ -177,7 +182,7 @@ impl JsHandler {
         }
     }
 
-    fn handle_cleanup(&mut self) {
+    fn handle_cleanup(&mut self, execute: bool) {
         // Clear existing timeouts
         if let Some(timer_id) = self.current_timer.take() {
             self.context.clear_timeout(timer_id);
@@ -196,6 +201,10 @@ impl JsHandler {
 
         // Execute callbacks
         if let Ok(mut callbacks) = self.callbacks.lock() {
+            if !execute {
+                callbacks.clear();
+                return;
+            }
             for callback in callbacks.iter_mut() {
                 (callback)();
             }
@@ -394,7 +403,7 @@ impl IdleManager {
         // Send cleanup message to JS handler
         let mut sender_clone = self.js_sender.lock().unwrap().clone();
         spawn_local(async move {
-            let _ = sender_clone.send(JsMessage::Cleanup).await;
+            let _ = sender_clone.send(JsMessage::CleanupWithCallbacks).await;
         });
 
         // The callbacks will be executed by JsHandler::handle_cleanup
