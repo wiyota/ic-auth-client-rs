@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- `unwrap()` has been completely removed.
+
 ## [0.4.1] - 2025-09-13
 
 ### Refactored
 
 - Resolved `IdleManager` initialization bug that caused web pages to freeze.
-
-- `unwrap()` has been completely removed.
 
 ## [0.4.0] - 2025-09-12 [YANKED]
 

@@ -281,7 +281,14 @@ impl std::fmt::Debug for IdleManager {
 impl Drop for IdleManager {
     fn drop(&mut self) {
         use futures::SinkExt;
-        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        let mut sender_clone = match self.js_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to lock js_sender");
+                return;
+            }
+        };
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::Cleanup).await;
         });
@@ -337,7 +344,14 @@ impl IdleManager {
     }
 
     fn initialize_event_listeners(&self, options: &Option<IdleManagerOptions>) {
-        let mut is_initialized = self.is_initialized.lock().unwrap();
+        let mut is_initialized = match self.is_initialized.lock() {
+            Ok(mut is_initialized) => is_initialized,
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to lock is_initialized");
+                return;
+            }
+        };
         if *is_initialized {
             return;
         }
@@ -345,7 +359,14 @@ impl IdleManager {
         let mut js_context = JsContext::new();
 
         for event_type in EVENTS.iter() {
-            let sender = self.js_sender.lock().unwrap().clone();
+            let sender = match self.js_sender.lock() {
+                Ok(sender) => sender.clone(),
+                Err(_) => {
+                    #[cfg(feature = "tracing")]
+                    error!("Failed to lock js_sender");
+                    return;
+                }
+            };
             let callback = Closure::wrap(Box::new(move |_: Event| {
                 use futures::SinkExt;
                 let mut sender_clone = sender.clone();
@@ -358,7 +379,14 @@ impl IdleManager {
         }
 
         if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
-            let sender = self.js_sender.lock().unwrap().clone();
+            let sender = match self.js_sender.lock() {
+                Ok(sender) => sender.clone(),
+                Err(_) => {
+                    #[cfg(feature = "tracing")]
+                    error!("Failed to lock js_sender");
+                    return;
+                }
+            };
             let scroll_debounce = options
                 .as_ref()
                 .and_then(|options| options.scroll_debounce)
@@ -397,7 +425,14 @@ impl IdleManager {
     pub fn exit(&mut self) {
         use futures::SinkExt;
         // Send cleanup message to JS handler
-        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        let mut sender_clone = match self.js_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to lock js_sender");
+                return;
+            }
+        };
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::CleanupWithCallbacks).await;
         });
@@ -407,7 +442,14 @@ impl IdleManager {
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
     fn reset_timer(&self) {
         use futures::SinkExt;
-        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        let mut sender_clone = match self.js_sender.lock() {
+            Ok(sender) => sender.clone(),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to lock js_sender");
+                return;
+            }
+        };
         let timeout = self.idle_timeout;
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::ResetTimer(timeout)).await;
