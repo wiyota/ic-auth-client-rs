@@ -301,7 +301,10 @@ impl AuthClient {
             }
         };
 
-        let mut identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+        let mut identity = match &key {
+            Key::WithRaw(k) => k.identity.clone(),
+            Key::Identity(i) => i.clone(),
+        };
         let mut chain: Arc<Mutex<Option<DelegationChain>>> = Arc::new(Mutex::new(None));
 
         // Now we definitely have a key, we can load delegation if it exists
