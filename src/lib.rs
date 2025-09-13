@@ -1346,7 +1346,7 @@ pub struct AuthClientLoginOptions {
     /// Auth Window feature config string.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100
     /// ```
     window_opener_features: Option<String>,
@@ -1425,7 +1425,7 @@ impl AuthClientLoginOptionsBuilder {
     /// Auth Window feature config string.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100
     /// ```
     pub fn window_opener_features(mut self, window_opener_features: String) -> Self {
@@ -1566,13 +1566,13 @@ impl IdleOptionsBuilder {
         self
     }
 
-    /// The duration of inactivity after which the system is considered idle.
+    /// The duration of inactivity after which the system is considered idle in milliseconds.
     pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
         self.idle_manager_options.idle_timeout = Some(idle_timeout);
         self
     }
 
-    /// A delay for debouncing scroll events.
+    /// A delay for debouncing scroll events in milliseconds.
     pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
         self.idle_manager_options.scroll_debounce = Some(scroll_debounce);
         self

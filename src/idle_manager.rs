@@ -377,11 +377,11 @@ impl IdleManager {
 pub struct IdleManagerOptions {
     /// A callback function to be executed when the system becomes idle.
     pub on_idle: Arc<Mutex<Vec<Callback>>>,
-    /// The duration of inactivity after which the system is considered idle.
+    /// The duration of inactivity after which the system is considered idle in milliseconds.
     pub idle_timeout: Option<u32>,
     /// A flag indicating whether to capture scroll events.
     pub capture_scroll: Option<bool>,
-    /// A delay for debouncing scroll events.
+    /// A delay for debouncing scroll events in milliseconds.
     pub scroll_debounce: Option<u32>,
 }
 
@@ -425,7 +425,7 @@ impl IdleManagerOptionsBuilder {
         self
     }
 
-    /// The duration of inactivity after which the system is considered idle.
+    /// The duration of inactivity after which the system is considered idle in milliseconds.
     pub fn idle_timeout(&mut self, idle_timeout: u32) -> &mut Self {
         self.idle_timeout = Some(idle_timeout);
         self
@@ -437,7 +437,7 @@ impl IdleManagerOptionsBuilder {
         self
     }
 
-    /// A delay for debouncing scroll events.
+    /// A delay for debouncing scroll events in milliseconds.
     pub fn scroll_debounce(&mut self, scroll_debounce: u32) -> &mut Self {
         self.scroll_debounce = Some(scroll_debounce);
         self
