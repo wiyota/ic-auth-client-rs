@@ -88,10 +88,17 @@ struct JsHandler {
     current_scroll_debounce_timer: Option<i32>,
     exit_closure: Option<Closure<dyn FnMut()>>,
     reset_closure: Option<Closure<dyn FnMut()>>,
+    callbacks: Arc<Mutex<Vec<Callback>>>,
+    idle_timeout: u32,
 }
 
 impl JsHandler {
-    fn new(receiver: mpsc::Receiver<JsMessage>, sender: mpsc::Sender<JsMessage>) -> Self {
+    fn new(
+        receiver: mpsc::Receiver<JsMessage>,
+        sender: mpsc::Sender<JsMessage>,
+        callbacks: Arc<Mutex<Vec<Callback>>>,
+        idle_timeout: u32,
+    ) -> Self {
         Self {
             context: JsContext::new(),
             receiver,
@@ -100,6 +107,8 @@ impl JsHandler {
             current_scroll_debounce_timer: None,
             exit_closure: None,
             reset_closure: None,
+            callbacks,
+            idle_timeout,
         }
     }
 
@@ -124,8 +133,14 @@ impl JsHandler {
             self.context.clear_timeout(timer_id);
         }
 
-        // If timeout is 0, just reset the timer without setting a new one
-        if timeout == 0 {
+        let actual_timeout = if timeout == 0 {
+            self.idle_timeout // Use the manager's idle_timeout to set a new timer
+        } else {
+            timeout
+        };
+
+        // If actual_timeout is 0, just reset the timer without setting a new one
+        if actual_timeout == 0 {
             return;
         }
 
@@ -139,7 +154,7 @@ impl JsHandler {
         });
 
         // Set the timeout with the closure
-        match self.context.set_timeout(&exit_closure, timeout as i32) {
+        match self.context.set_timeout(&exit_closure, actual_timeout as i32) {
             Ok(timer_id) => {
                 self.current_timer = Some(timer_id);
                 self.exit_closure = Some(exit_closure);
@@ -178,6 +193,13 @@ impl JsHandler {
         // Drop closures
         self.exit_closure = None;
         self.reset_closure = None;
+
+        // Execute callbacks
+        if let Ok(mut callbacks) = self.callbacks.lock() {
+            for callback in callbacks.iter_mut() {
+                (callback)();
+            }
+        }
     }
 
     fn handle_scroll_debounce(&mut self, delay: u32) {
@@ -285,8 +307,15 @@ impl IdleManager {
         // Start the JS handler in a separate task
         let handler_receiver = receiver;
         let handler_sender = sender;
+        let callbacks_for_handler = callbacks.clone();
+        let idle_timeout_for_handler = idle_timeout;
         spawn_local(async move {
-            let mut handler = JsHandler::new(handler_receiver, handler_sender);
+            let mut handler = JsHandler::new(
+                handler_receiver,
+                handler_sender,
+                callbacks_for_handler,
+                idle_timeout_for_handler,
+            );
             handler.run().await;
         });
 
@@ -368,14 +397,7 @@ impl IdleManager {
             let _ = sender_clone.send(JsMessage::Cleanup).await;
         });
 
-        // Execute callbacks
-        if let Ok(context) = self.context.lock() {
-            if let Ok(mut callbacks) = context.callbacks.lock() {
-                for callback in callbacks.iter_mut() {
-                    (callback)();
-                }
-            }
-        }
+        // The callbacks will be executed by JsHandler::handle_cleanup
     }
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
     fn reset_timer(&self) {
