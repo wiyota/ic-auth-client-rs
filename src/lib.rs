@@ -1615,7 +1615,7 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::*;
 
-    #[wasm_bindgen_test]
+    #[test]
     fn test_idle_options_builder() {
         let options = IdleOptionsBuilder::new()
             .disable_idle(true)
@@ -1627,28 +1627,48 @@ mod tests {
             .build();
         assert_eq!(options.disable_idle, Some(true));
         assert_eq!(options.disable_default_idle_callback, Some(true));
-        assert!(
+        assert_eq!(
             options
                 .idle_manager_options
                 .on_idle
                 .as_ref()
                 .lock()
                 .unwrap()
-                .is_empty()
+                .len(),
+            1
         );
         assert_eq!(options.idle_manager_options.idle_timeout, Some(1000));
         assert_eq!(options.idle_manager_options.scroll_debounce, Some(500));
         assert_eq!(options.idle_manager_options.capture_scroll, Some(true));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn test_base_key_type_display() {
         assert_eq!(BaseKeyType::Ed25519.to_string(), ED25519_KEY_LABEL);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn test_base_key_type_default() {
         assert_eq!(BaseKeyType::default(), BaseKeyType::Ed25519);
+    }
+
+    #[test]
+    fn test_auth_client_login_options_builder() {
+        let custom_values = vec![("key".to_string(), "value".into())]
+            .into_iter()
+            .collect();
+
+        let options = AuthClientLoginOptions::builder()
+            .allow_pin_authentication(true)
+            .custom_values(custom_values)
+            .on_error(|_| {})
+            .on_success(|_| {})
+            .build();
+
+        assert_eq!(options.allow_pin_authentication, Some(true));
+        assert!(options.on_error.is_some());
+        assert!(options.on_success.is_some());
+        assert!(options.custom_values.is_some());
     }
 
     #[wasm_bindgen_test]
@@ -1678,24 +1698,5 @@ mod tests {
             auth_client.identity().sender().unwrap(),
             identity.as_arc_identity().sender().unwrap()
         ); // Check if identity was set
-    }
-
-    #[wasm_bindgen_test]
-    fn test_auth_client_login_options_builder() {
-        let custom_values = vec![("key".to_string(), "value".into())]
-            .into_iter()
-            .collect();
-
-        let options = AuthClientLoginOptions::builder()
-            .allow_pin_authentication(true)
-            .custom_values(custom_values)
-            .on_error(|_| {})
-            .on_success(|_| {})
-            .build();
-
-        assert_eq!(options.allow_pin_authentication, Some(true));
-        assert!(options.on_error.is_some());
-        assert!(options.on_success.is_some());
-        assert!(options.custom_values.is_some());
     }
 }

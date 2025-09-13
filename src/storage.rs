@@ -170,6 +170,7 @@ impl AuthClientStorage for AuthClientStorageType {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,7 +189,6 @@ mod tests {
         assert_eq!(raw_key, decoded);
     }
 
-    #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_local_storage() {
         let mut storage = LocalStorage;
@@ -200,7 +200,6 @@ mod tests {
         assert_eq!(value, None);
     }
 
-    #[allow(dead_code)]
     #[wasm_bindgen_test]
     async fn test_auth_client_storage_type() {
         let mut storage = AuthClientStorageType::LocalStorage(LocalStorage);
