@@ -1274,12 +1274,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hex-literal"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
-
-[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1467,7 +1461,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "ic-certification",
- "ic-ed25519 0.2.0",
+ "ic-ed25519",
  "ic-transport-types",
  "ic-verify-bls-signature",
  "js-sys",
@@ -1497,15 +1491,17 @@ dependencies = [
 
 [[package]]
 name = "ic-auth-client"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
+ "ed25519-dalek",
+ "futures",
  "getrandom 0.3.3",
  "gloo-events",
  "gloo-timers",
  "gloo-utils",
  "ic-agent",
- "ic-ed25519 0.3.0",
+ "rand 0.8.5",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -1579,23 +1575,6 @@ checksum = "b0a381e86a9d559c816a7ff4419e56f5d37f96357258fb63b0cb7026db0f729b"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
- "hkdf",
- "pem",
- "rand 0.8.5",
- "thiserror 2.0.12",
- "zeroize",
-]
-
-[[package]]
-name = "ic-ed25519"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba67d72c59e6e7a9794054bf991f6d6f397073f36b02d66ca652aa6f4c2117f3"
-dependencies = [
- "candid",
- "curve25519-dalek",
- "ed25519-dalek",
- "hex-literal",
  "hkdf",
  "pem",
  "rand 0.8.5",

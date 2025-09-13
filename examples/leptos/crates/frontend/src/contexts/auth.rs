@@ -142,7 +142,12 @@ fn identity_provider() -> Option<Url> {
 #[component]
 pub fn AuthProvider(children: Children) -> impl IntoView {
     let auth = AuthStore::create(AuthClientCreateOptions {
-        idle_options: Some(IdleOptions::builder().disable_idle(true).build()),
+        idle_options: Some(
+            IdleOptions::builder()
+                .idle_timeout(5 * 1000) // 5 seconds
+                .on_idle(|| console_log("User is idle"))
+                .build(),
+        ),
         ..Default::default()
     });
 
