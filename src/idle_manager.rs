@@ -1,7 +1,8 @@
+use futures::channel::{mpsc, oneshot};
 use gloo_utils::window;
 use std::{
     mem,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex},
 };
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
@@ -23,7 +24,6 @@ const EVENTS: [&str; 6] = [
 struct JsContext {
     event_handlers: Vec<(String, JsCallback)>,
     window: Window,
-    is_initialized: bool,
 }
 
 impl JsContext {
@@ -31,7 +31,6 @@ impl JsContext {
         Self {
             event_handlers: Vec::new(),
             window: window(),
-            is_initialized: false,
         }
     }
 
@@ -109,7 +108,8 @@ impl JsHandler {
     }
 
     async fn run(&mut self) {
-        while let Ok(msg) = self.receiver.recv() {
+        use futures::StreamExt;
+        while let Some(msg) = self.receiver.next().await {
             match msg {
                 JsMessage::ResetTimer(timeout) => self.handle_reset_timer(timeout),
                 JsMessage::Cleanup => self.handle_cleanup(),
@@ -130,7 +130,7 @@ impl JsHandler {
         }
 
         // Create a sender for the IdleManager to send the Cleanup message
-        let (sender, oneshot_receiver) = mpsc::channel();
+        let (sender, oneshot_receiver) = oneshot::channel();
 
         // Use a closure to handle the timeout
         let exit_closure = Closure::once(move || {
@@ -145,12 +145,14 @@ impl JsHandler {
                 self.exit_closure = Some(exit_closure);
 
                 // Spawn a task to handle the oneshot receiver
-                let sender = self.get_handler_sender();
+                let mut sender = self.get_handler_sender();
                 spawn_local(async move {
                     // Wait for the oneshot message
-                    let _ = oneshot_receiver.recv();
-                    // Then send the cleanup message to the handler
-                    let _ = sender.send(JsMessage::Cleanup);
+                    if oneshot_receiver.await.is_ok() {
+                        // Then send the cleanup message to the handler
+                        use futures::SinkExt;
+                        let _ = sender.send(JsMessage::Cleanup).await;
+                    }
                 });
             }
             Err(_) => {
@@ -185,7 +187,7 @@ impl JsHandler {
         }
 
         // Create a sender for the debounce timer
-        let (sender, oneshot_receiver) = mpsc::channel();
+        let (sender, oneshot_receiver) = oneshot::channel();
 
         // Use a closure to handle the timeout
         let reset_closure = Closure::once(move || {
@@ -200,12 +202,14 @@ impl JsHandler {
                 self.reset_closure = Some(reset_closure);
 
                 // Spawn a task to handle the oneshot receiver
-                let sender = self.get_handler_sender();
+                let mut sender = self.get_handler_sender();
                 spawn_local(async move {
                     // Wait for the oneshot message
-                    let _ = oneshot_receiver.recv();
-                    // Then send the reset timer message to the handler
-                    let _ = sender.send(JsMessage::ResetTimer(0));
+                    if oneshot_receiver.await.is_ok() {
+                        // Then send the reset timer message to the handler
+                        use futures::SinkExt;
+                        let _ = sender.send(JsMessage::ResetTimer(0)).await;
+                    }
                 });
             }
             Err(_) => {
@@ -224,6 +228,7 @@ pub struct IdleManager {
     context: Arc<Mutex<Context>>,
     idle_timeout: u32,
     js_sender: Arc<Mutex<mpsc::Sender<JsMessage>>>,
+    is_initialized: Arc<Mutex<bool>>,
 }
 
 impl std::fmt::Debug for IdleManager {
@@ -248,9 +253,11 @@ impl std::fmt::Debug for IdleManager {
 
 impl Drop for IdleManager {
     fn drop(&mut self) {
-        if let Ok(sender) = self.js_sender.lock() {
-            let _ = sender.send(JsMessage::Cleanup);
-        }
+        use futures::SinkExt;
+        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        spawn_local(async move {
+            let _ = sender_clone.send(JsMessage::Cleanup).await;
+        });
     }
 }
 
@@ -272,7 +279,7 @@ impl IdleManager {
             .and_then(|options| options.idle_timeout)
             .unwrap_or(Self::DEFAULT_IDLE_TIMEOUT);
 
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel(10);
         let js_sender = Arc::new(Mutex::new(sender.clone()));
 
         // Start the JS handler in a separate task
@@ -287,6 +294,7 @@ impl IdleManager {
             context: Arc::new(Mutex::new(Context { callbacks })),
             idle_timeout,
             js_sender,
+            is_initialized: Arc::new(Mutex::new(false)),
         };
 
         instance.initialize_event_listeners(&options);
@@ -295,44 +303,48 @@ impl IdleManager {
     }
 
     fn initialize_event_listeners(&self, options: &Option<IdleManagerOptions>) {
-        // Create a new JS context just for initializing the event listeners
-        let mut js_context = JsContext::new();
-
-        if js_context.is_initialized {
+        let mut is_initialized = self.is_initialized.lock().unwrap();
+        if *is_initialized {
             return;
         }
 
+        let mut js_context = JsContext::new();
+
         for event_type in EVENTS.iter() {
-            let sender = self.js_sender.clone();
+            let sender = self.js_sender.lock().unwrap().clone();
             let callback = Closure::wrap(Box::new(move |_: Event| {
-                if let Ok(sender) = sender.lock() {
-                    let _ = sender.send(JsMessage::ResetTimer(0));
-                }
+                use futures::SinkExt;
+                let mut sender_clone = sender.clone();
+                spawn_local(async move {
+                    let _ = sender_clone.send(JsMessage::ResetTimer(0)).await;
+                });
             }) as Box<dyn FnMut(Event)>);
 
             js_context.add_event_listener(event_type, callback);
         }
 
         if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
-            let sender = self.js_sender.clone();
+            let sender = self.js_sender.lock().unwrap().clone();
             let scroll_debounce = options
                 .as_ref()
                 .and_then(|options| options.scroll_debounce)
                 .unwrap_or(Self::DEFAULT_SCROLL_DEBOUNCE);
 
             let callback = Closure::wrap(Box::new(move |_: Event| {
-                if let Ok(sender) = sender.lock() {
-                    let _ = sender.send(JsMessage::ScrollDebounce(scroll_debounce));
-                }
+                use futures::SinkExt;
+                let mut sender_clone = sender.clone();
+                spawn_local(async move {
+                    let _ = sender_clone
+                        .send(JsMessage::ScrollDebounce(scroll_debounce))
+                        .await;
+                });
             }) as Box<dyn FnMut(Event)>);
 
             js_context.add_event_listener("scroll", callback);
         }
 
-        js_context.is_initialized = true;
-
-        // The JS context will be dropped after this function, but the event listeners remain
-        // They will be cleaned up when JsHandler processes the Cleanup message
+        *is_initialized = true;
+        Box::leak(Box::new(js_context));
     }
 
     /// Registers a callback to be executed when the system becomes idle.
@@ -349,10 +361,12 @@ impl IdleManager {
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
     pub fn exit(&mut self) {
+        use futures::SinkExt;
         // Send cleanup message to JS handler
-        if let Ok(sender) = self.js_sender.lock() {
-            let _ = sender.send(JsMessage::Cleanup);
-        }
+        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        spawn_local(async move {
+            let _ = sender_clone.send(JsMessage::Cleanup).await;
+        });
 
         // Execute callbacks
         if let Ok(context) = self.context.lock() {
@@ -363,15 +377,16 @@ impl IdleManager {
             }
         }
     }
-
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
     fn reset_timer(&self) {
-        if let Ok(sender) = self.js_sender.lock() {
-            let _ = sender.send(JsMessage::ResetTimer(self.idle_timeout));
-        }
+        use futures::SinkExt;
+        let mut sender_clone = self.js_sender.lock().unwrap().clone();
+        let timeout = self.idle_timeout;
+        spawn_local(async move {
+            let _ = sender_clone.send(JsMessage::ResetTimer(timeout)).await;
+        });
     }
 }
-
 /// IdleManagerOptions is a struct that contains options for configuring an [`IdleManager`].
 #[derive(Default, Clone)]
 pub struct IdleManagerOptions {

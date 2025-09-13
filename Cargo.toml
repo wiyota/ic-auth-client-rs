@@ -23,6 +23,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
+futures = "0.3"
 getrandom = { version = "0.3", optional = true }
 gloo-events = "0.2"
 gloo-timers = "0.3"
