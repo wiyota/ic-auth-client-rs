@@ -1,7 +1,5 @@
 use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine as _};
 use std::future::Future;
-#[cfg(feature = "tracing")]
-use tracing::error;
 use web_sys::{Storage, wasm_bindgen::JsValue};
 
 /// A key for storing the identity key pair.
@@ -81,7 +79,7 @@ impl LocalStorage {
     }
 
     fn get_local_storage(&self) -> Option<Storage> {
-        match web_sys::window()?.local_storage() {
+        match gloo_utils::window().local_storage() {
             Ok(storage) => storage,
             Err(_e) => {
                 #[cfg(feature = "tracing")]

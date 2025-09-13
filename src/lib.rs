@@ -2,6 +2,10 @@
 //!
 //! This crate is intended for use in front-end WebAssembly environments in conjunction with [ic-agent](https://docs.rs/ic-agent).
 
+#[cfg(feature = "tracing")]
+#[macro_use]
+extern crate tracing;
+
 use crate::{
     idle_manager::{IdleManager, IdleManagerOptions},
     storage::{
@@ -13,10 +17,10 @@ use crate::{
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
-    Identity,
     export::Principal,
     identity::{
-        AnonymousIdentity, BasicIdentity, DelegatedIdentity, DelegationError, SignedDelegation,
+        AnonymousIdentity, BasicIdentity, DelegatedIdentity, DelegationError, Identity,
+        SignedDelegation,
     },
 };
 use ic_ed25519::PrivateKey;
@@ -32,8 +36,6 @@ use std::{
 use storage::StoredKey;
 #[cfg(not(target_family = "wasm"))]
 use tokio::task::spawn_local;
-#[cfg(feature = "tracing")]
-use tracing::{debug, error, info, warn};
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
@@ -664,13 +666,14 @@ impl AuthClient {
         // Reset completion flag for the new login attempt
         self.login_complete.store(false, Ordering::SeqCst);
 
-        let window = web_sys::window().unwrap();
-
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)
-        let identity_provider_url: web_sys::Url = options
-            .identity_provider
-            .clone()
-            .unwrap_or_else(|| web_sys::Url::new(IDENTITY_PROVIDER_DEFAULT).unwrap());
+        let identity_provider_url: web_sys::Url =
+            options.identity_provider.clone().unwrap_or_else(|| {
+                match web_sys::Url::new(IDENTITY_PROVIDER_DEFAULT) {
+                    Ok(url) => url,
+                    Err(_) => unreachable!(),
+                }
+            });
 
         // Set the correct hash if it isn't already set.
         identity_provider_url.set_hash(IDENTITY_PROVIDER_ENDPOINT);
@@ -684,7 +687,7 @@ impl AuthClient {
         self.take_event_handler();
 
         // Open a new window with the IDP provider.
-        let window_handle_result = window.open_with_url_and_target_and_features(
+        let window_handle_result = window().open_with_url_and_target_and_features(
             &identity_provider_url.href(),
             "idpWindow",
             options.window_opener_features.as_deref().unwrap_or(""),
@@ -1027,26 +1030,25 @@ impl AuthClient {
 
         // If a return URL is provided, redirect the user to that URL.
         if let Some(return_to) = return_to {
-            if let Some(window) = web_sys::window() {
-                let href_result = return_to.href();
-                if let Ok(href) = href_result {
-                    if let Ok(history) = window.history() {
-                        if history
-                            .push_state_with_url(&JsValue::null(), "", Some(&href))
-                            .is_err()
-                            && window.location().set_href(&href).is_err()
-                        {
-                            #[cfg(feature = "tracing")]
-                            error!("Failed to set href during logout");
-                        }
-                    } else if window.location().set_href(&href).is_err() {
+            let window = window();
+            let href_result = return_to.href();
+            if let Ok(href) = href_result {
+                if let Ok(history) = window.history() {
+                    if history
+                        .push_state_with_url(&JsValue::null(), "", Some(&href))
+                        .is_err()
+                        && window.location().set_href(&href).is_err()
+                    {
                         #[cfg(feature = "tracing")]
-                        error!("Failed to set href during logout (no history)");
+                        error!("Failed to set href during logout");
                     }
-                } else {
+                } else if window.location().set_href(&href).is_err() {
                     #[cfg(feature = "tracing")]
-                    error!("Failed to get href from return_to location during logout");
+                    error!("Failed to set href during logout (no history)");
                 }
+            } else {
+                #[cfg(feature = "tracing")]
+                error!("Failed to get href from return_to location during logout");
             }
         }
     }

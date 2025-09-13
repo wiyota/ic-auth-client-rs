@@ -1,7 +1,7 @@
-use std::sync::mpsc;
+use gloo_utils::window;
 use std::{
     mem,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
 };
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
@@ -30,7 +30,7 @@ impl JsContext {
     fn new() -> Self {
         Self {
             event_handlers: Vec::new(),
-            window: web_sys::window().expect("should have a Window"),
+            window: window(),
             is_initialized: false,
         }
     }
@@ -500,7 +500,7 @@ mod tests {
         sleep(500).await;
 
         // Trigger a mousemove event
-        let window = web_sys::window().unwrap();
+        let window = window();
         let event = window.document().unwrap().create_event("Event").unwrap();
         event.init_event("mousemove");
         window.dispatch_event(&event).unwrap();
@@ -533,7 +533,7 @@ mod tests {
 
         assert!(!*callback.lock().unwrap());
 
-        let window = web_sys::window().unwrap();
+        let window = window();
         let event = window.document().unwrap().create_event("Event").unwrap();
         event.init_event("scroll");
 
@@ -561,7 +561,7 @@ mod tests {
             *callback_clone.lock().unwrap() = true;
         });
 
-        let window = web_sys::window().unwrap();
+        let window = window();
         let event = window.document().unwrap().create_event("Event").unwrap();
         event.init_event("scroll");
         window.dispatch_event(&event).unwrap();
