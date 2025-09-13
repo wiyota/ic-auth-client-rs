@@ -200,11 +200,7 @@ impl JsHandler {
         self.reset_closure = None;
 
         // Execute callbacks
-        if let Ok(mut callbacks) = self.callbacks.lock() {
-            if !execute {
-                callbacks.clear();
-                return;
-            }
+        if execute && let Ok(mut callbacks) = self.callbacks.lock() {
             for callback in callbacks.iter_mut() {
                 (callback)();
             }
