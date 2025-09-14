@@ -8,9 +8,10 @@ use crate::{
         AuthClientStorage, AuthClientStorageType, KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY,
         KEY_VECTOR, StoredKey,
     },
-    util::{delegation_chain::DelegationChain, sleep::sleep},
+    util::delegation_chain::DelegationChain,
 };
 use ed25519_dalek::SigningKey;
+use futures::future::{AbortHandle, Abortable};
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
@@ -23,22 +24,16 @@ use ic_agent::{
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{
-    cell::RefCell,
     collections::HashMap,
     fmt,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
     Location, MessageEvent,
     wasm_bindgen::{JsCast, JsValue},
 };
-
-thread_local! {
-    static EVENT_HANDLERS: RefCell<HashMap<usize, EventListener>> = RefCell::new(HashMap::new());
-    static IDP_WINDOWS: RefCell<HashMap<usize, web_sys::Window>> = RefCell::new(HashMap::new());
-}
 
 type OnSuccess = Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>;
 type OnError = Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>;
@@ -48,9 +43,28 @@ const IDENTITY_PROVIDER_ENDPOINT: &str = "#authorize";
 
 const ED25519_KEY_LABEL: &str = "Ed25519";
 
-const INTERRUPT_CHECK_INTERVAL: u64 = 500;
+const INTERRUPT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 /// The error message when a user interrupts the authentication process.
 pub const ERROR_USER_INTERRUPT: &str = "UserInterrupt";
+
+/// Holds the resources for an active login process.
+/// When this struct is dropped, it automatically cleans up all associated resources.
+#[derive(Debug)]
+struct ActiveLogin {
+    idp_window: web_sys::Window,
+    message_handler: EventListener,
+    interruption_check_abort_handle: AbortHandle,
+}
+
+impl Drop for ActiveLogin {
+    fn drop(&mut self) {
+        // Abort the interruption check task.
+        self.interruption_check_abort_handle.abort();
+        // Close the IdP window, ignoring errors if it's already closed.
+        let _ = self.idp_window.close();
+        // The message_handler (EventListener) is automatically dropped, removing the listener.
+    }
+}
 
 /// The tool for managing authentication and identity.
 /// It maintains the state of the user's identity and provides methods for authentication.
@@ -68,92 +82,11 @@ pub struct AuthClient {
     pub idle_manager: Option<IdleManager>,
     /// The options for handling idle timeouts.
     idle_options: Option<IdleOptions>,
-    /// A unique identifier for this instance and its clones, used to associate it with thread-local resources.
-    /// Wrapped in Arc to manage cleanup only when the last clone is dropped.
-    id: Arc<usize>,
-    /// Flag to indicate if the current login flow has completed (success, failure, or interrupt).
-    login_complete: Arc<AtomicBool>,
-}
-
-impl Drop for AuthClient {
-    fn drop(&mut self) {
-        // Clean up the thread-local storage only when the last Arc pointing to the id is dropped.
-        if Arc::strong_count(&self.id) == 1 {
-            let id_val = *self.id; // Get the actual ID value
-
-            // Use try_borrow_mut to avoid panic if already borrowed, e.g., during event handling
-            EVENT_HANDLERS.with(|cell| {
-                match cell.try_borrow_mut() {
-                    Ok(mut map) => {
-                        map.remove(&id_val);
-                    }
-                    Err(_) => {
-                        #[cfg(feature = "tracing")]
-                        error!("AuthClient::drop: Could not remove event handler for id {} (already borrowed)", id_val);
-                    }
-                }
-            });
-
-            IDP_WINDOWS.with(|cell| {
-                match cell.try_borrow_mut() {
-                    Ok(mut map) => {
-                        // Close the window if it exists before removing it
-                        if let Some(window) = map.remove(&id_val) {
-                             // Ignore error if window is already closed
-                            let _ = window.close();
-                        }
-                    }
-                    Err(_) => {
-                        #[cfg(feature = "tracing")]
-                        error!("AuthClient::drop: Could not remove IDP window for id {} (already borrowed)", id_val);
-                    }
-                }
-            });
-        }
-    }
+    /// Holds the resources for an active login process.
+    active_login: Arc<Mutex<Option<ActiveLogin>>>,
 }
 
 impl AuthClient {
-    /// Sets the event handler for this instance in thread-local storage.
-    fn set_event_handler(&self, handler: EventListener) {
-        EVENT_HANDLERS.with(|cell| {
-            let mut map = cell.borrow_mut();
-            map.insert(*self.id, handler);
-        });
-    }
-
-    /// Takes the event handler for this instance, removing it from thread-local storage.
-    fn take_event_handler(&self) -> Option<EventListener> {
-        EVENT_HANDLERS.with(|cell| {
-            let mut map = cell.borrow_mut();
-            map.remove(&self.id)
-        })
-    }
-
-    /// Sets the IdP window for this instance in thread-local storage.
-    fn set_idp_window(&self, window: web_sys::Window) {
-        IDP_WINDOWS.with(|cell| {
-            let mut map = cell.borrow_mut();
-            map.insert(*self.id, window);
-        });
-    }
-
-    /// Gets the IdP window for this instance from thread-local storage.
-    fn get_idp_window(&self) -> Option<web_sys::Window> {
-        IDP_WINDOWS.with(|cell| {
-            let map = cell.borrow();
-            map.get(&self.id).cloned()
-        })
-    }
-
-    /// Takes the IdP window for this instance, removing it from thread-local storage.
-    fn take_idp_window(&self) -> Option<web_sys::Window> {
-        IDP_WINDOWS.with(|cell| {
-            let mut map = cell.borrow_mut();
-            map.remove(&self.id)
-        })
-    }
-
     /// Default time to live for the session in nanoseconds (8 hours).
     const DEFAULT_TIME_TO_LIVE: u64 = 8 * 60 * 60 * 1_000_000_000;
 
@@ -281,13 +214,6 @@ impl AuthClient {
             idle_manager = Some(IdleManager::new(idle_manager_options));
         }
 
-        // Generate a unique ID for this instance
-        let id = {
-            static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-            // Use Relaxed ordering as we only need atomicity, not synchronization
-            Arc::new(NEXT_ID.fetch_add(1, Ordering::Relaxed))
-        };
-
         Ok(Self {
             identity: Arc::new(Mutex::new(identity)),
             key,
@@ -295,8 +221,7 @@ impl AuthClient {
             chain,
             idle_manager,
             idle_options: options.idle_options,
-            id,
-            login_complete: Arc::new(AtomicBool::new(false)),
+            active_login: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -351,16 +276,8 @@ impl AuthClient {
         message: AuthResponseSuccess,
         on_success: Option<OnSuccess>,
     ) -> Result<(), DelegationError> {
-        // Signal that login has completed normally *before* closing the window or calling callbacks.
-        // This prevents the check_interruption task from incorrectly flagging a user interrupt.
-        self.login_complete.store(true, Ordering::SeqCst);
-
-        // Clean up window and event handler *before* potentially long-running async operations or callbacks
-        if let Some(w) = self.take_idp_window() {
-            // Ignore error if window is already closed
-            let _ = w.close();
-        };
-        self.take_event_handler(); // Remove event handler associated with this login attempt
+        // Take and drop the ActiveLogin struct, which handles all resource cleanup.
+        let _ = self.active_login.lock().unwrap().take();
 
         let delegations = message.delegations.clone();
         let user_public_key = message.user_public_key.clone();
@@ -562,8 +479,13 @@ impl AuthClient {
 
     /// Logs the user in with the provided options.
     pub fn login_with_options(&mut self, options: AuthClientLoginOptions) {
-        // Reset completion flag for the new login attempt
-        self.login_complete.store(false, Ordering::SeqCst);
+        // If a login process is already active, drop it. This will trigger its Drop implementation,
+        // cleaning up associated resources (closing window, aborting tasks, etc.).
+        if let Ok(mut guard) = self.active_login.lock() {
+            if guard.is_some() {
+                let _ = guard.take();
+            }
+        }
 
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)
         let identity_provider_url: web_sys::Url =
@@ -577,14 +499,6 @@ impl AuthClient {
         // Set the correct hash if it isn't already set.
         identity_provider_url.set_hash(IDENTITY_PROVIDER_ENDPOINT);
 
-        // If `login` has been called previously, then close/remove any previous windows
-        // and event listeners.
-        if let Some(idp_window) = self.take_idp_window() {
-            // Ignore error if window is already closed
-            let _ = idp_window.close();
-        }
-        self.take_event_handler();
-
         // Open a new window with the IDP provider.
         let window_handle_result = window().open_with_url_and_target_and_features(
             &identity_provider_url.href(),
@@ -592,140 +506,85 @@ impl AuthClient {
             options.window_opener_features.as_deref().unwrap_or(""),
         );
 
-        match window_handle_result {
-            Ok(Some(window_handle)) => {
-                self.set_idp_window(window_handle);
-
-                // Add an event listener to handle responses.
-                let handler =
-                    self.get_event_handler(identity_provider_url.clone(), options.clone());
-                self.set_event_handler(handler);
-
-                // Start checking for interruption, passing the completion flag
-                self.check_interruption(options.on_error.clone(), self.login_complete.clone());
-            }
+        let idp_window = match window_handle_result {
+            Ok(Some(window_handle)) => window_handle,
             Ok(None) => {
                 // Window opening was blocked by the browser (e.g., popup blocker)
-                self.login_complete.store(true, Ordering::SeqCst); // Mark as complete (failed)
                 if let Some(on_error) = options.on_error {
                     if let Ok(mut guard) = on_error.lock() {
                         (*guard)(Some(
                             "Failed to open IdP window. Check popup blocker.".to_string(),
                         ));
-                    } else {
-                        #[cfg(feature = "tracing")]
-                        error!("Failed to acquire lock on on_error callback");
                     }
-                } else {
-                    #[cfg(feature = "tracing")]
-                    warn!("Failed to open IdP window. Check popup blocker.");
                 }
-                // Clean up potentially stored (but unused) handler/window refs for this ID
-                self.take_event_handler();
-                self.take_idp_window();
+                return;
             }
             Err(e) => {
                 // Other error during window opening
-                self.login_complete.store(true, Ordering::SeqCst); // Mark as complete (failed)
                 let error_message = format!("Error opening IdP window: {:?}", e);
                 if let Some(on_error) = options.on_error {
                     if let Ok(mut guard) = on_error.lock() {
-                        (*guard)(Some(error_message.clone()));
-                    } else {
-                        #[cfg(feature = "tracing")]
-                        error!("Failed to acquire lock on on_error callback");
+                        (*guard)(Some(error_message));
                     }
-                } else {
-                    #[cfg(feature = "tracing")]
-                    error!("{}", error_message);
                 }
-                // Clean up potentially stored (but unused) handler/window refs for this ID
-                self.take_event_handler();
-                self.take_idp_window();
+                return;
             }
-        }
-    }
+        };
 
-    /// Checks for user interruption during the login process.
-    fn check_interruption(&self, on_error: Option<OnError>, login_complete: Arc<AtomicBool>) {
-        let client_id = *self.id;
-        let idp_window = self.get_idp_window();
-        let login_complete_clone = login_complete.clone();
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
 
-        spawn_local({
+        // Task to check for user interruption (closing the window).
+        let interruption_check_task = {
+            let idp_window_clone = idp_window.clone();
+            let on_error_clone = options.on_error.clone();
+            let client_clone = self.clone();
+
             async move {
-                if let Some(idp_window_ref) = idp_window {
-                    // Give the authentication process a moment to start before checking for interruptions
-                    sleep(1000).await;
+                // Give the authentication process a moment to start before checking for interruptions
+                gloo_timers::future::sleep(Duration::from_secs(1)).await;
 
-                    // Check periodically if the window is still open
-                    while !idp_window_ref.closed().unwrap_or(true)
-                        && !login_complete_clone.load(Ordering::SeqCst)
-                    {
-                        sleep(INTERRUPT_CHECK_INTERVAL).await;
-                    }
-
-                    // Only report a user interrupt if login isn't already complete AND the window is closed
-                    // This avoids false UserInterrupt errors when the window is closed after authentication completes
-                    if idp_window_ref.closed().unwrap_or(true)
-                        && !login_complete_clone.load(Ordering::SeqCst)
-                    {
-                        // Clean up resources first
-                        let _ = idp_window_ref.close(); // Ignore error if already closed
-
-                        // Remove the event handler from thread-local storage
-                        EVENT_HANDLERS.with(|cell| {
-                            // Use try_borrow_mut to avoid panic if already borrowed
-                            if let Ok(mut map) = cell.try_borrow_mut() {
-                                map.remove(&client_id);
-                            } else {
-                                #[cfg(feature = "tracing")]
-                                error!("AuthClient::check_interruption: Could not remove event handler for id {} (already borrowed)", client_id);
-                            }
-                        });
-
-                        // Also remove the window reference if it wasn't removed by handle_success/handle_failure
-                        IDP_WINDOWS.with(|cell| {
-                            if let Ok(mut map) = cell.try_borrow_mut() {
-                                map.remove(&client_id);
-                            } else {
-                                #[cfg(feature = "tracing")]
-                                error!("AuthClient::check_interruption: Could not remove IDP window for id {} (already borrowed)", client_id);
-                            }
-                        });
-
-                        // Double-check one last time before triggering the error callback
-                        // This helps avoid race conditions where login completion happens right as we're checking
-                        if !login_complete_clone.load(Ordering::SeqCst) {
-                            // Only now call the error callback if provided
-                            if let Some(on_error) = on_error {
-                                // Ensure login_complete is set before calling the callback
-                                login_complete_clone.store(true, Ordering::SeqCst);
-                                if let Ok(mut guard) = on_error.lock() {
-                                    (*guard)(Some(ERROR_USER_INTERRUPT.to_string()));
-                                } else {
-                                    #[cfg(feature = "tracing")]
-                                    error!(
-                                        "Failed to acquire lock on on_error callback during user interrupt"
-                                    );
-                                }
-                            } else {
-                                // If no error handler, still mark as complete to prevent potential issues
-                                login_complete_clone.store(true, Ordering::SeqCst);
+                loop {
+                    if idp_window_clone.closed().unwrap_or(true) {
+                        // Window is closed. This is a user interrupt.
+                        if let Some(on_error) = on_error_clone {
+                            if let Ok(mut guard) = on_error.lock() {
+                                (*guard)(Some(ERROR_USER_INTERRUPT.to_string()));
                             }
                         }
-                    } else {
-                        // Window is not closed or login is already complete, no need to do anything
-                        // Resources will be cleaned up by handle_success/failure or another mechanism
+                        // Clean up by taking the active_login from the client.
+                        let _ = client_clone.active_login.lock().unwrap().take();
+                        break;
                     }
+                    gloo_timers::future::sleep(INTERRUPT_CHECK_INTERVAL).await;
                 }
             }
+        };
+
+        let abortable_task = Abortable::new(interruption_check_task, abort_registration);
+        spawn_local(async {
+            // The task will be aborted if the AbortHandle is dropped or abort() is called.
+            // We don't care about the result here.
+            let _ = abortable_task.await;
         });
+
+        // Add an event listener to handle responses.
+        let message_handler =
+            self.get_event_handler(idp_window.clone(), identity_provider_url, options);
+
+        let active_login = ActiveLogin {
+            idp_window,
+            message_handler,
+            interruption_check_abort_handle: abort_handle,
+        };
+
+        // Store the active login information.
+        *self.active_login.lock().unwrap() = Some(active_login);
     }
 
     /// Returns an event handler for the login process.
     fn get_event_handler(
         &mut self,
+        idp_window: web_sys::Window,
         identity_provider_url: web_sys::Url,
         options: AuthClientLoginOptions,
     ) -> EventListener {
@@ -750,22 +609,11 @@ impl AuthClient {
                 .unwrap_or(Self::DEFAULT_TIME_TO_LIVE);
 
             let handle_error_wrapper = |error: String| {
-                // Clone necessary parts, avoid cloning the whole client into the async block if possible
-                let login_complete = client.login_complete.clone();
+                let mut client_clone = client.clone();
                 let on_error = options.on_error.clone();
-                let client_id = *client.id; // Get the ID value
-
                 spawn_local(async move {
-                    // Signal completion
-                    login_complete.store(true, Ordering::SeqCst);
-
-                    // Clean up window and handler (using the ID)
-                    if let Some(window) =
-                        IDP_WINDOWS.with(|map| map.borrow_mut().remove(&client_id))
-                    {
-                        let _ = window.close();
-                    }
-                    EVENT_HANDLERS.with(|map| map.borrow_mut().remove(&client_id));
+                    // Take and drop the ActiveLogin struct, which handles all resource cleanup.
+                    let _ = client_clone.active_login.lock().unwrap().take();
 
                     // Call the error callback
                     if let Some(on_error_cb) = on_error {
@@ -853,19 +701,12 @@ impl AuthClient {
                             }
                         }
 
-                        if let Some(idp_window) = client.get_idp_window() {
-                            if idp_window
-                                .post_message(&request_js_value, &identity_provider_url.origin())
-                                .is_err()
-                            {
-                                handle_error_wrapper(
-                                    "Failed to post message to IdP window".to_string(),
-                                );
-                            }
-                        } else {
-                            // This case might happen if the window was closed unexpectedly between checks
+                        if idp_window
+                            .post_message(&request_js_value, &identity_provider_url.origin())
+                            .is_err()
+                        {
                             handle_error_wrapper(
-                                "IdP window not found when trying to post message".to_string(),
+                                "Failed to post message to IdP window".to_string(),
                             );
                         }
                     }
