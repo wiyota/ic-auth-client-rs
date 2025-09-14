@@ -21,7 +21,7 @@ use ic_agent::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
-use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
+use std::{cell::RefCell, collections::HashMap, fmt, sync::Arc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
     Location, MessageEvent,
@@ -39,6 +39,10 @@ const ED25519_KEY_LABEL: &str = "Ed25519";
 const INTERRUPT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 /// The error message when a user interrupts the authentication process.
 pub const ERROR_USER_INTERRUPT: &str = "UserInterrupt";
+
+thread_local! {
+    static ACTIVE_LOGIN: RefCell<Option<ActiveLogin>> = RefCell::new(None);
+}
 
 /// Holds the resources for an active login process.
 /// When this struct is dropped, it automatically cleans up all associated resources.
@@ -76,8 +80,6 @@ pub struct AuthClient {
     pub idle_manager: Option<IdleManager>,
     /// The options for handling idle timeouts.
     idle_options: Option<IdleOptions>,
-    /// Holds the resources for an active login process.
-    active_login: Arc<Mutex<Option<ActiveLogin>>>,
 }
 
 impl AuthClient {
@@ -211,7 +213,6 @@ impl AuthClient {
             chain,
             idle_manager,
             idle_options: options.idle_options,
-            active_login: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -261,7 +262,7 @@ impl AuthClient {
         on_success: Option<OnSuccess>,
     ) -> Result<(), DelegationError> {
         // Take and drop the ActiveLogin struct, which handles all resource cleanup.
-        let _ = self.active_login.lock().take();
+        let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
 
         let delegations = message.delegations.clone();
         let user_public_key = message.user_public_key.clone();
@@ -425,9 +426,7 @@ impl AuthClient {
     pub fn login_with_options(&mut self, options: AuthClientLoginOptions) {
         // If a login process is already active, drop it. This will trigger its Drop implementation,
         // cleaning up associated resources (closing window, aborting tasks, etc.).
-        if self.active_login.lock().is_some() {
-            let _ = self.active_login.lock().take();
-        }
+        ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
 
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)
         let identity_provider_url: web_sys::Url =
@@ -475,7 +474,6 @@ impl AuthClient {
         let interruption_check_task = {
             let idp_window_clone = idp_window.clone();
             let on_error_clone = options.on_error.clone();
-            let client_clone = self.clone();
 
             async move {
                 // Give the authentication process a moment to start before checking for interruptions
@@ -488,7 +486,7 @@ impl AuthClient {
                             on_error.lock()(Some(ERROR_USER_INTERRUPT.to_string()));
                         }
                         // Clean up by taking the active_login from the client.
-                        let _ = client_clone.active_login.lock().take();
+                        let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
                         break;
                     }
                     gloo_timers::future::sleep(INTERRUPT_CHECK_INTERVAL).await;
@@ -514,7 +512,7 @@ impl AuthClient {
         };
 
         // Store the active login information.
-        *self.active_login.lock() = Some(active_login);
+        ACTIVE_LOGIN.with(|cell| *cell.borrow_mut() = Some(active_login));
     }
 
     /// Returns an event handler for the login process.
@@ -545,14 +543,13 @@ impl AuthClient {
                 .unwrap_or(Self::DEFAULT_TIME_TO_LIVE);
 
             let handle_error_wrapper = |error: String| {
-                let client_clone = client.clone();
                 let on_error = options.on_error.clone();
                 spawn_local(async move {
                     #[cfg(feature = "tracing")]
                     error!("AuthClient login failed in event handler: {}", error);
 
                     // Take and drop the ActiveLogin struct, which handles all resource cleanup.
-                    let _ = client_clone.active_login.lock().take();
+                    let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
 
                     // Call the error callback
                     if let Some(on_error_cb) = on_error {
