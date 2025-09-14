@@ -1,7 +1,6 @@
 use ic_agent::{export::Principal, identity::SignedDelegation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use web_sys::js_sys::Date;
 
 /// A chain of delegations. This is JSON Serializable.
 ///
@@ -38,7 +37,7 @@ impl DelegationChain {
     /// * `checks` - Principals to validate on the chain.
     pub fn is_delegation_valid(&self, checks: Option<Vec<Principal>>) -> bool {
         // Verify that the no delegation is expired. If any are in the chain, returns false.
-        let now = (Date::now() * 1_000_000.0) as u64;
+        let now = now() * 1_000_000;
         if self
             .delegations
             .iter()
@@ -62,6 +61,17 @@ impl DelegationChain {
 
         true
     }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn now() -> u64 {
+    chrono::Utc::now().timestamp_millis() as u64
+}
+
+#[cfg(target_family = "wasm")]
+#[cfg(feature = "wasm-js")]
+fn now() -> u64 {
+    web_sys::js_sys::Date::now() as u64
 }
 
 #[allow(dead_code)]

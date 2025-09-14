@@ -24,32 +24,38 @@ crate-type = ["rlib", "cdylib"]
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 futures = "0.3"
-getrandom = { version = "0.3", optional = true }
-gloo-events = "0.2"
-gloo-timers = "0.3"
-gloo-utils = "0.2"
 ic-agent = { version = "0.44", default-features = false }
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
-serde-wasm-bindgen = "0.6"
 serde_json = "1.0"
 thiserror = "2"
 tracing = { version = "0.1", optional = true }
+
+[target."cfg(target_family = \"wasm\")".dependencies]
+getrandom = { version = "0.3", optional = true }
+gloo-events = { version = "0.2", optional = true }
+gloo-timers = { version = "0.3", optional = true }
+gloo-utils = { version = "0.2", optional = true }
+serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", default-features = false, features = [
+wasm-timer = "0.2"
+web-sys = { version = "0.3", optional = true, default-features = false, features = [
     "MessageEvent",
     "Storage",
     "Url",
     "Window",
 ] }
 
-[target."cfg(target_family = \"wasm\")".dependencies]
-wasm-bindgen-futures = "0.4"
-wasm-timer = "0.2"
-
 [target."cfg(not(target_family = \"wasm\"))".dependencies]
+chrono = "0.4"
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
 tokio = "1.47"
+url = "2"
 
 [dev-dependencies]
 serde_test = "1.0"
@@ -57,8 +63,16 @@ wasm-bindgen-test = "0.3"
 
 [features]
 default = ["wasm-js"]
+miniserde = []
 tracing = ["dep:tracing"]
-wasm-js = ["getrandom/wasm_js", "ic-agent/wasm-bindgen"]
+wasm-js = [
+    "dep:gloo-events",
+    "dep:gloo-timers",
+    "dep:gloo-utils",
+    "dep:web-sys",
+    "getrandom/wasm_js",
+    "ic-agent/wasm-bindgen",
+]
 
 [profile.release]
 opt-level = "z"
