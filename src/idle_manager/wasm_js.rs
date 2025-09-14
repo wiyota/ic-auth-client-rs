@@ -1,9 +1,7 @@
 use futures::channel::{mpsc, oneshot};
 use gloo_utils::window;
-use std::{
-    mem,
-    sync::{Arc, Mutex},
-};
+use parking_lot::Mutex;
+use std::{mem, sync::Arc};
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{Event, Window};
@@ -200,8 +198,8 @@ impl JsHandler {
         self.reset_closure = None;
 
         // Execute callbacks
-        if execute && let Ok(mut callbacks) = self.callbacks.lock() {
-            for callback in callbacks.iter_mut() {
+        if execute {
+            for callback in self.callbacks.lock().iter_mut() {
                 (callback)();
             }
         }
@@ -262,17 +260,7 @@ impl std::fmt::Debug for IdleManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IdleManager")
             .field("idle_timeout", &self.idle_timeout)
-            .field("callbacks", &{
-                if let Ok(context) = self.context.lock() {
-                    if let Ok(callbacks) = context.callbacks.lock() {
-                        callbacks.len()
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            })
+            .field("callbacks", &{ self.context.lock().callbacks.lock().len() })
             .field("js_sender", &"<mpsc channel>")
             .finish()
     }
@@ -281,14 +269,7 @@ impl std::fmt::Debug for IdleManager {
 impl Drop for IdleManager {
     fn drop(&mut self) {
         use futures::SinkExt;
-        let mut sender_clone = match self.js_sender.lock() {
-            Ok(sender) => sender.clone(),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Failed to lock js_sender");
-                return;
-            }
-        };
+        let mut sender_clone = self.js_sender.lock().clone();
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::Cleanup).await;
         });
@@ -344,14 +325,7 @@ impl IdleManager {
     }
 
     fn initialize_event_listeners(&self, options: &Option<IdleManagerOptions>) {
-        let mut is_initialized = match self.is_initialized.lock() {
-            Ok(is_initialized) => is_initialized,
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Failed to lock is_initialized");
-                return;
-            }
-        };
+        let mut is_initialized = self.is_initialized.lock();
         if *is_initialized {
             return;
         }
@@ -359,14 +333,7 @@ impl IdleManager {
         let mut js_context = JsContext::new();
 
         for event_type in EVENTS.iter() {
-            let sender = match self.js_sender.lock() {
-                Ok(sender) => sender.clone(),
-                Err(_) => {
-                    #[cfg(feature = "tracing")]
-                    error!("Failed to lock js_sender");
-                    return;
-                }
-            };
+            let sender = self.js_sender.lock().clone();
             let callback = Closure::wrap(Box::new(move |_: Event| {
                 use futures::SinkExt;
                 let mut sender_clone = sender.clone();
@@ -379,14 +346,7 @@ impl IdleManager {
         }
 
         if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
-            let sender = match self.js_sender.lock() {
-                Ok(sender) => sender.clone(),
-                Err(_) => {
-                    #[cfg(feature = "tracing")]
-                    error!("Failed to lock js_sender");
-                    return;
-                }
-            };
+            let sender = self.js_sender.lock().clone();
             let scroll_debounce = options
                 .as_ref()
                 .and_then(|options| options.scroll_debounce)
@@ -414,25 +374,18 @@ impl IdleManager {
     where
         F: FnMut() + Send + 'static,
     {
-        if let Ok(context) = self.context.lock() {
-            if let Ok(mut callbacks) = context.callbacks.lock() {
-                callbacks.push(Box::new(callback));
-            }
-        }
+        self.context
+            .lock()
+            .callbacks
+            .lock()
+            .push(Box::new(callback));
     }
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
     pub fn exit(&mut self) {
         use futures::SinkExt;
         // Send cleanup message to JS handler
-        let mut sender_clone = match self.js_sender.lock() {
-            Ok(sender) => sender.clone(),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Failed to lock js_sender");
-                return;
-            }
-        };
+        let mut sender_clone = self.js_sender.lock().clone();
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::CleanupWithCallbacks).await;
         });
@@ -442,14 +395,7 @@ impl IdleManager {
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
     fn reset_timer(&self) {
         use futures::SinkExt;
-        let mut sender_clone = match self.js_sender.lock() {
-            Ok(sender) => sender.clone(),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Failed to lock js_sender");
-                return;
-            }
-        };
+        let mut sender_clone = self.js_sender.lock().clone();
         let timeout = self.idle_timeout;
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::ResetTimer(timeout)).await;
@@ -471,11 +417,7 @@ pub struct IdleManagerOptions {
 
 impl std::fmt::Debug for IdleManagerOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let callback_count = if let Ok(callbacks) = self.on_idle.lock() {
-            callbacks.len()
-        } else {
-            0
-        };
+        let callback_count = self.on_idle.lock().len();
         f.debug_struct("IdleManagerOptions")
             .field("on_idle", &format!("{} callbacks", callback_count))
             .field("idle_timeout", &self.idle_timeout)
@@ -542,7 +484,8 @@ impl IdleManagerOptionsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::sleep::sleep;
+    use gloo_timers::future::sleep;
+    use std::time::Duration;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
@@ -556,15 +499,15 @@ mod tests {
         let callback = Arc::new(Mutex::new(false));
         let callback_clone = callback.clone();
         idle_manager.register_callback(move || {
-            *callback_clone.lock().unwrap() = true;
+            *callback_clone.lock() = true;
         });
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
         // Wait for the idle timeout to trigger
-        sleep(2000).await;
+        sleep(Duration::from_millis(2000)).await;
 
-        assert!(*callback.lock().unwrap());
+        assert!(*callback.lock());
     }
 
     #[wasm_bindgen_test]
@@ -576,12 +519,12 @@ mod tests {
         let callback = Arc::new(Mutex::new(false));
         let callback_clone = callback.clone();
         idle_manager.register_callback(move || {
-            *callback_clone.lock().unwrap() = true;
+            *callback_clone.lock() = true;
         });
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
-        sleep(500).await;
+        sleep(Duration::from_millis(500)).await;
 
         // Trigger a mousemove event
         let window = window();
@@ -589,14 +532,14 @@ mod tests {
         event.init_event("mousemove");
         window.dispatch_event(&event).unwrap();
 
-        sleep(700).await;
+        sleep(Duration::from_millis(700)).await;
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
         // Wait for the idle timeout to trigger
-        sleep(500).await;
+        sleep(Duration::from_millis(500)).await;
 
-        assert!(*callback.lock().unwrap());
+        assert!(*callback.lock());
     }
 
     #[wasm_bindgen_test]
@@ -612,21 +555,21 @@ mod tests {
         let callback = Arc::new(Mutex::new(false));
         let callback_clone = callback.clone();
         idle_manager.register_callback(move || {
-            *callback_clone.lock().unwrap() = true;
+            *callback_clone.lock() = true;
         });
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
         let window = window();
         let event = window.document().unwrap().create_event("Event").unwrap();
         event.init_event("scroll");
 
         for _ in 0..7 {
-            sleep(200).await;
+            sleep(Duration::from_millis(200)).await;
             window.dispatch_event(&event).unwrap();
         }
 
-        assert!(*callback.lock().unwrap());
+        assert!(*callback.lock());
     }
 
     #[wasm_bindgen_test]
@@ -642,7 +585,7 @@ mod tests {
         let callback = Arc::new(Mutex::new(false));
         let callback_clone = callback.clone();
         idle_manager.register_callback(move || {
-            *callback_clone.lock().unwrap() = true;
+            *callback_clone.lock() = true;
         });
 
         let window = window();
@@ -650,14 +593,14 @@ mod tests {
         event.init_event("scroll");
         window.dispatch_event(&event).unwrap();
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
-        sleep(1200).await;
+        sleep(Duration::from_millis(1200)).await;
 
-        assert!(!*callback.lock().unwrap());
+        assert!(!*callback.lock());
 
-        sleep(700).await;
+        sleep(Duration::from_millis(700)).await;
 
-        assert!(*callback.lock().unwrap());
+        assert!(*callback.lock());
     }
 }
