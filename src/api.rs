@@ -1,3 +1,4 @@
+use ic_agent::identity::SignedDelegation;
 use serde::{Deserialize, Serialize};
 
 /// Represents an Internet Identity authentication request.
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// It includes all the necessary parameters that the Internet Identity Service needs to authenticate a user.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct InternetIdentityAuthRequest {
+pub struct InternetIdentityAuthRequest {
     /// The kind of request. This is typically set to "authorize-client".
     pub kind: String,
     /// The public key of the session.
@@ -43,7 +44,7 @@ pub struct AuthResponseSuccess {
 /// and the error message in case of failure.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct IdentityServiceResponseMessage {
+pub struct IdentityServiceResponseMessage {
     /// The kind of the response. This is typically set to "authorize-ready", "authorize-client-success", or "authorize-client-failure".
     kind: String,
     /// The delegations provided by the user during the authentication process. This is present in case of a successful authentication.
@@ -78,7 +79,7 @@ impl IdentityServiceResponseMessage {
 
 /// Enum representing the kind of response from the Identity Service.
 #[derive(Debug, Clone)]
-enum IdentityServiceResponseKind {
+pub enum IdentityServiceResponseKind {
     /// Represents a ready state.
     Ready,
     /// Represents a successful authentication response.
