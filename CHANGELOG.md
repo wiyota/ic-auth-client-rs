@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- `unwrap()` has been completely removed.
+### Added
+
+- Public API types (`InternetIdentityAuthRequest`, `IdentityServiceResponseMessage`, `IdentityServiceResponseKind`) for external usage
+- `parking_lot` dependency for improved mutex performance
+
+### Changed
+
+- **BREAKING**: Restructured codebase with platform-specific modules (`auth_client`, `idle_manager`, `storage`)
+- **BREAKING**: WASM-specific dependencies (`gloo-*`, `web-sys`) now optional behind `wasm-js` feature flag
+- **BREAKING**: `AuthClient` methods `login()` and `logout()` now use `&self` instead of `&mut self`
+- Improved resource management in WASM with RAII pattern using `ActiveLogin` struct
+- Replaced custom sleep utility with `gloo-timers` for better async compatibility
+
+### Removed
+
+- Custom `sleep` utility module (replaced by `gloo-timers`)
+- Thread-local HashMap storage for authentication resources
+- All remaining `unwrap()` calls replaced with proper error handling
+
+### Dependencies
+
+- Added: `parking_lot`, `futures`, native-specific dependencies (`keyring`, `chrono`, `tokio`, `url`)
+- Updated: `gloo-timers` with `futures` feature
+- Made optional: WASM-specific dependencies behind feature flags
 
 ## [0.4.1] - 2025-09-13
 
@@ -19,9 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **(Breaking)** Updated `ic-agent` dependency to **v0.44**.
+- **(Breaking)**: Updated `ic-agent` dependency to **v0.44**.
 
-- **(Breaking)** Deprecate the `ed25519-consensus` crate for private keys and use `ic-ed25519` instead.
+- **(Breaking)**: Deprecate the `ed25519-consensus` crate for private keys and use `ic-ed25519` instead.
 
 - Internal values now update correctly upon login/logout, eliminating the need for page refreshes.
 
@@ -39,17 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **(Breaking)** Updated `ic-agent` dependency to **v0.40**.
+- **(Breaking)**: Updated `ic-agent` dependency to **v0.40**.
   This version is **not** compatible with previous versions.
 
 ### Removed
 
-- **(Breaking)** Removed `IdentityType`.
+- **(Breaking)**: Removed `IdentityType`.
   Use `ArcIdentity` as a replacement.
 
 ### Refactored
 
-- **(Breaking)** Reorganized some internal build patterns.
+- **(Breaking)**: Reorganized some internal build patterns.
   These changes may impact specific build or integration scenarios.
 
 ## [0.3.1] - 2024-11-14
