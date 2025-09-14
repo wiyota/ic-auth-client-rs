@@ -64,23 +64,26 @@ impl Drop for ActiveLogin {
     }
 }
 
+#[derive(Debug)]
+struct AuthClientInner {
+    identity: Arc<Mutex<ArcIdentity>>,
+    key: Key,
+    storage: Mutex<AuthClientStorageType>,
+    chain: Arc<Mutex<Option<DelegationChain>>>,
+    idle_manager: Mutex<Option<IdleManager>>,
+    idle_options: Option<IdleOptions>,
+}
+
+impl Drop for AuthClientInner {
+    fn drop(&mut self) {
+        ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
+    }
+}
+
 /// The tool for managing authentication and identity.
 /// It maintains the state of the user's identity and provides methods for authentication.
 #[derive(Clone, Debug)]
-pub struct AuthClient {
-    /// The user's identity. This can be an anonymous identity, an Ed25519 identity, or a delegated identity.
-    identity: Arc<Mutex<ArcIdentity>>,
-    /// The key associated with the user's identity.
-    key: Key,
-    /// The storage used to persist the user's identity and key.
-    storage: AuthClientStorageType,
-    /// The delegation chain associated with the user's identity.
-    chain: Arc<Mutex<Option<DelegationChain>>>,
-    /// The idle manager that handles idle timeouts.
-    pub idle_manager: Option<IdleManager>,
-    /// The options for handling idle timeouts.
-    idle_options: Option<IdleOptions>,
-}
+pub struct AuthClient(Arc<AuthClientInner>);
 
 impl AuthClient {
     /// Default time to live for the session in nanoseconds (8 hours).
@@ -206,40 +209,35 @@ impl AuthClient {
             idle_manager = Some(IdleManager::new(idle_manager_options));
         }
 
-        Ok(Self {
+        Ok(Self(Arc::new(AuthClientInner {
             identity: Arc::new(Mutex::new(identity)),
             key,
-            storage,
+            storage: Mutex::new(storage),
             chain,
-            idle_manager,
+            idle_manager: Mutex::new(idle_manager),
             idle_options: options.idle_options,
-        })
+        })))
+    }
+
+    /// Returns the idle manager if it exists.
+    pub fn idle_manager(&self) -> Option<IdleManager> {
+        self.0.idle_manager.lock().clone()
     }
 
     /// Registers the default idle callback.
-    fn register_default_idle_callback(
-        identity: Arc<Mutex<ArcIdentity>>,
-        storage: AuthClientStorageType,
-        chain: Arc<Mutex<Option<DelegationChain>>>,
-        idle_manager: Option<IdleManager>,
-        idle_options: Option<IdleOptions>,
-    ) {
-        if let Some(options) = idle_options.as_ref() {
+    fn register_default_idle_callback(&self) {
+        if let Some(options) = self.0.idle_options.as_ref() {
             if options.disable_default_idle_callback.unwrap_or_default() {
                 return;
             }
 
             if options.idle_manager_options.on_idle.lock().is_empty() {
-                if let Some(idle_manager) = idle_manager.as_ref() {
-                    let identity = identity.clone();
-                    let storage = storage.clone();
-                    let chain = chain.clone();
+                if let Some(idle_manager) = self.0.idle_manager.lock().as_ref() {
+                    let client = self.clone();
                     let callback = move || {
-                        let identity = identity.clone();
-                        let storage = storage.clone();
-                        let chain = chain.clone();
+                        let client = client.clone();
                         spawn_local(async move {
-                            Self::logout_core(identity, storage, chain, None).await;
+                            client.logout(None).await;
                             match window().location().reload() {
                                 Ok(_) => (),
                                 Err(_e) => {
@@ -257,7 +255,7 @@ impl AuthClient {
 
     /// Handles a successful authentication response.
     async fn handle_success(
-        &mut self,
+        &self,
         message: AuthResponseSuccess,
         on_success: Option<OnSuccess>,
     ) -> Result<(), DelegationError> {
@@ -273,9 +271,11 @@ impl AuthClient {
             public_key: user_public_key.clone(),
         };
 
-        if let Key::WithRaw(key) = &self.key {
+        if let Key::WithRaw(key) = &self.0.key {
             let _ = self
+                .0
                 .storage
+                .lock()
                 .set(KEY_STORAGE_KEY, StoredKey::encode(key.raw_key()))
                 .await;
         }
@@ -286,17 +286,19 @@ impl AuthClient {
         // First, save to storage immediately to ensure consistency between refreshes
         // This is critical for authentication persistence
         let _ = self
+            .0
             .storage
+            .lock()
             .set(KEY_STORAGE_DELEGATION, chain_json.clone())
             .await;
 
         // Now update the in-memory state
         {
-            *self.chain.lock() = Some(delegation_chain.clone());
-            *self.identity.lock() =
+            *self.0.chain.lock() = Some(delegation_chain.clone());
+            *self.0.identity.lock() =
                 ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                     user_public_key.clone(),
-                    Box::new(self.key.as_arc_identity()),
+                    Box::new(self.0.key.as_arc_identity()),
                     delegations.clone(),
                 )));
         }
@@ -316,7 +318,7 @@ impl AuthClient {
                 .map(|s| s != Principal::anonymous())
                 .unwrap_or(false);
 
-            let _has_chain = self.chain.lock().is_some();
+            let _has_chain = self.0.chain.lock().is_some();
 
             #[cfg(feature = "tracing")]
             debug!(
@@ -326,7 +328,7 @@ impl AuthClient {
 
             // Try a more direct approach - recreate the delegation chain from JSON
             // This ensures our in-memory and storage states are completely in sync
-            *self.chain.lock() = Some(DelegationChain::from_json(&chain_json));
+            *self.0.chain.lock() = Some(DelegationChain::from_json(&chain_json));
 
             // Check again after our fix attempt
             let is_auth_retry = self.is_authenticated();
@@ -342,10 +344,10 @@ impl AuthClient {
                 }
 
                 // Attempt one final fix: completely reconstruct the delegated identity
-                *self.identity.lock() =
+                *self.0.identity.lock() =
                     ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                         user_public_key.clone(),
-                        Box::new(self.key.as_arc_identity()),
+                        Box::new(self.0.key.as_arc_identity()),
                         delegations.clone(),
                     )));
 
@@ -358,27 +360,22 @@ impl AuthClient {
 
         // create the idle manager on a successful login if we haven't disabled it
         // and it doesn't already exist.
-        let disable_idle = match self.idle_options.as_ref() {
+        let disable_idle = match self.0.idle_options.as_ref() {
             Some(options) => options.disable_idle.unwrap_or(false),
             None => false,
         };
-        if self.idle_manager.is_none() && !disable_idle {
+        if self.0.idle_manager.lock().is_none() && !disable_idle {
             let idle_manager_options = self
+                .0
                 .idle_options
                 .as_ref()
                 .map(|o| o.idle_manager_options.clone());
             let new_idle_manager = IdleManager::new(idle_manager_options);
-            self.idle_manager = Some(new_idle_manager);
+            *self.0.idle_manager.lock() = Some(new_idle_manager);
 
             // Register default callback only if idle_manager was successfully created
-            if let Some(idle_manager) = self.idle_manager.as_ref() {
-                Self::register_default_idle_callback(
-                    self.identity.clone(),
-                    self.storage.clone(),
-                    self.chain.clone(),
-                    Some(idle_manager.clone()),
-                    self.idle_options.clone(),
-                );
+            if self.0.idle_manager.lock().is_some() {
+                self.register_default_idle_callback();
             }
         }
 
@@ -393,7 +390,7 @@ impl AuthClient {
 
     /// Returns the identity of the user.
     pub fn identity(&self) -> Arc<dyn Identity> {
-        self.identity.lock().as_arc_identity()
+        self.0.identity.lock().as_arc_identity()
     }
 
     pub fn principal(&self) -> Result<Principal, String> {
@@ -409,6 +406,7 @@ impl AuthClient {
             .unwrap_or(false);
 
         let is_valid_chain = self
+            .0
             .chain
             .lock()
             .as_ref()
@@ -418,12 +416,12 @@ impl AuthClient {
     }
 
     /// Logs the user in with default options.
-    pub fn login(&mut self) {
+    pub fn login(&self) {
         self.login_with_options(AuthClientLoginOptions::default());
     }
 
     /// Logs the user in with the provided options.
-    pub fn login_with_options(&mut self, options: AuthClientLoginOptions) {
+    pub fn login_with_options(&self, options: AuthClientLoginOptions) {
         // If a login process is already active, drop it. This will trigger its Drop implementation,
         // cleaning up associated resources (closing window, aborting tasks, etc.).
         ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
@@ -517,7 +515,7 @@ impl AuthClient {
 
     /// Returns an event handler for the login process.
     fn get_event_handler(
-        &mut self,
+        &self,
         idp_window: web_sys::Window,
         identity_provider_url: web_sys::Url,
         options: AuthClientLoginOptions,
@@ -566,6 +564,7 @@ impl AuthClient {
                         let request = InternetIdentityAuthRequest {
                             kind: "authorize-client".to_string(),
                             session_public_key: client
+                                .0
                                 .key
                                 .public_key()
                                 .expect("Failed to get public key"),
@@ -639,7 +638,7 @@ impl AuthClient {
                         }
                     }
                     IdentityServiceResponseKind::AuthSuccess(response) => {
-                        let mut client_clone = client.clone();
+                        let client_clone = client.clone();
                         let on_success = options.on_success.clone();
                         let on_error = options.on_error.clone();
                         spawn_local(async move {
@@ -672,13 +671,13 @@ impl AuthClient {
     }
 
     /// Logs out the user and clears the stored identity.
-    async fn logout_core(
+    async fn logout_core<S: AuthClientStorage>(
         identity: Arc<Mutex<ArcIdentity>>,
-        mut storage: AuthClientStorageType,
+        storage: &mut S,
         chain: Arc<Mutex<Option<DelegationChain>>>,
         return_to: Option<Location>,
     ) {
-        Self::delete_storage(&mut storage).await;
+        Self::delete_storage(storage).await;
 
         // Reset this auth client to a non-authenticated state.
         *identity.lock() = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
@@ -711,15 +710,16 @@ impl AuthClient {
 
     /// Log the user out.
     /// If a return URL is provided, the user will be redirected to that URL after logging out.
-    pub async fn logout(&mut self, return_to: Option<Location>) {
-        if let Some(idle_manager) = self.idle_manager.take() {
+    pub async fn logout(&self, return_to: Option<Location>) {
+        if let Some(idle_manager) = self.0.idle_manager.lock().take() {
             drop(idle_manager);
         }
 
+        let mut storage_lock = self.0.storage.lock();
         Self::logout_core(
-            self.identity.clone(),
-            self.storage.clone(),
-            self.chain.clone(),
+            self.0.identity.clone(),
+            &mut *storage_lock,
+            self.0.chain.clone(),
             return_to,
         )
         .await;
