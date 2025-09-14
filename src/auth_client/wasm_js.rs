@@ -49,8 +49,7 @@ thread_local! {
 #[derive(Debug)]
 struct ActiveLogin {
     idp_window: web_sys::Window,
-    #[allow(dead_code)]
-    message_handler: EventListener,
+    _message_handler: EventListener,
     interruption_check_abort_handle: AbortHandle,
 }
 
@@ -500,12 +499,12 @@ impl AuthClient {
         });
 
         // Add an event listener to handle responses.
-        let message_handler =
+        let _message_handler =
             self.get_event_handler(idp_window.clone(), identity_provider_url, options);
 
         let active_login = ActiveLogin {
             idp_window,
-            message_handler,
+            _message_handler,
             interruption_check_abort_handle: abort_handle,
         };
 

@@ -445,34 +445,34 @@ pub struct IdleManagerOptionsBuilder {
 
 impl IdleManagerOptionsBuilder {
     /// A callback function to be executed when the system becomes idle.
-    pub fn on_idle(&mut self, on_idle: fn()) -> &mut Self {
+    pub fn on_idle(mut self, on_idle: fn()) -> Self {
         self.on_idle
             .push(Box::new(on_idle) as Box<dyn FnMut() + Send>);
         self
     }
 
     /// The duration of inactivity after which the system is considered idle in milliseconds.
-    pub fn idle_timeout(&mut self, idle_timeout: u32) -> &mut Self {
+    pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
         self.idle_timeout = Some(idle_timeout);
         self
     }
 
     /// A flag indicating whether to capture scroll events.
-    pub fn capture_scroll(&mut self, capture_scroll: bool) -> &mut Self {
+    pub fn capture_scroll(mut self, capture_scroll: bool) -> Self {
         self.capture_scroll = Some(capture_scroll);
         self
     }
 
     /// A delay for debouncing scroll events in milliseconds.
-    pub fn scroll_debounce(&mut self, scroll_debounce: u32) -> &mut Self {
+    pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
         self.scroll_debounce = Some(scroll_debounce);
         self
     }
 
     /// Builds the [`IdleManagerOptions`] struct.
-    pub fn build(&mut self) -> IdleManagerOptions {
+    pub fn build(self) -> IdleManagerOptions {
         IdleManagerOptions {
-            on_idle: Arc::new(Mutex::new(mem::take(&mut self.on_idle))),
+            on_idle: Arc::new(Mutex::new(self.on_idle)),
             idle_timeout: self.idle_timeout,
             capture_scroll: self.capture_scroll,
             scroll_debounce: self.scroll_debounce,
