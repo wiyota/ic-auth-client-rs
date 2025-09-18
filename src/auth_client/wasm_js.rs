@@ -5,13 +5,13 @@ use crate::{
     },
     idle_manager::{IdleManager, IdleManagerOptions},
     storage::{
-        AuthClientStorage, AuthClientStorageType, KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY,
-        KEY_VECTOR, StoredKey,
+        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_VECTOR, StoredKey,
+        async_storage::{AuthClientStorage, AuthClientStorageType},
     },
     util::delegation_chain::DelegationChain,
 };
 use ed25519_dalek::SigningKey;
-use futures::future::{AbortHandle, Abortable};
+use futures::future::{AbortHandle, Abortable, BoxFuture};
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
@@ -21,15 +21,12 @@ use ic_agent::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
-use std::{cell::RefCell, collections::HashMap, fmt, sync::Arc, time::Duration};
+use std::{cell::RefCell, fmt, future::Future, sync::Arc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
     Location, MessageEvent,
     wasm_bindgen::{JsCast, JsValue},
 };
-
-type OnSuccess = Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>;
-type OnError = Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>;
 
 const IDENTITY_PROVIDER_DEFAULT: &str = "https://identity.ic0.app";
 const IDENTITY_PROVIDER_ENDPOINT: &str = "#authorize";
@@ -39,6 +36,60 @@ const ED25519_KEY_LABEL: &str = "Ed25519";
 const INTERRUPT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 /// The error message when a user interrupts the authentication process.
 pub const ERROR_USER_INTERRUPT: &str = "UserInterrupt";
+
+#[derive(Clone)]
+struct OnSuccess(Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>);
+
+impl<F> From<F> for OnSuccess
+where
+    F: FnMut(AuthResponseSuccess) + Send + 'static,
+{
+    fn from(f: F) -> Self {
+        OnSuccess(Arc::new(Mutex::new(Box::new(f))))
+    }
+}
+
+#[derive(Clone)]
+struct OnSuccessAsync(
+    Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) -> BoxFuture<'static, ()> + Send>>>,
+);
+
+impl<F, Fut> From<F> for OnSuccessAsync
+where
+    F: FnMut(AuthResponseSuccess) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(mut f: F) -> Self {
+        use futures::future::FutureExt;
+        OnSuccessAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
+    }
+}
+
+#[derive(Clone)]
+struct OnError(Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>);
+
+impl<F> From<F> for OnError
+where
+    F: FnMut(Option<String>) + Send + 'static,
+{
+    fn from(f: F) -> Self {
+        OnError(Arc::new(Mutex::new(Box::new(f))))
+    }
+}
+
+#[derive(Clone)]
+struct OnErrorAsync(Arc<Mutex<Box<dyn FnMut(Option<String>) -> BoxFuture<'static, ()> + Send>>>);
+
+impl<F, Fut> From<F> for OnErrorAsync
+where
+    F: FnMut(Option<String>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn from(mut f: F) -> Self {
+        use futures::future::FutureExt;
+        OnErrorAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
+    }
+}
 
 thread_local! {
     static ACTIVE_LOGIN: RefCell<Option<ActiveLogin>> = RefCell::new(None);
@@ -120,7 +171,10 @@ impl AuthClient {
                     let mut rng = rand::thread_rng();
                     let private_key = SigningKey::generate(&mut rng).to_bytes();
                     let _ = storage
-                        .set(KEY_STORAGE_KEY, StoredKey::encode(&private_key))
+                        .set(
+                            KEY_STORAGE_KEY,
+                            StoredKey::String(StoredKey::encode(&private_key)),
+                        )
                         .await;
                     Key::WithRaw(KeyWithRaw::new(private_key))
                 }
@@ -137,58 +191,56 @@ impl AuthClient {
         let chain_storage = storage.get(KEY_STORAGE_DELEGATION).await;
 
         if let Some(chain_storage) = chain_storage {
-            match chain_storage {
-                StoredKey::String(chain_storage) => {
-                    // Try to load the delegation chain
-                    let chain_result = DelegationChain::from_json(&chain_storage);
-                    chain = Arc::new(Mutex::new(Some(chain_result)));
+            let chain_storage = match chain_storage {
+                StoredKey::String(chain_storage) => chain_storage,
+                StoredKey::Raw(chain_storage) => StoredKey::encode(&chain_storage),
+            };
 
-                    // First, extract the needed data from the lock without holding it across await
-                    let delegation_data = {
-                        let guard = chain.lock();
-                        if let Some(chain_inner) = guard.as_ref() {
-                            if chain_inner.is_delegation_valid(None) {
-                                // Extract the data we need while we have the lock
-                                let public_key = chain_inner.public_key.clone();
-                                let delegations = chain_inner.delegations.clone();
-                                Some((public_key, delegations))
-                            } else {
-                                // Signal we need to delete storage if delegation is invalid
-                                None
-                            }
-                        } else {
-                            // No chain data
-                            Some((Vec::new(), Vec::new()))
-                        }
-                    };
+            // Try to load the delegation chain
+            let chain_result = DelegationChain::from_json(&chain_storage);
+            chain = Arc::new(Mutex::new(Some(chain_result)));
 
-                    // Now use the extracted data without holding the lock
-                    match delegation_data {
-                        Some((public_key, delegations)) => {
-                            if !public_key.is_empty() {
-                                // Create the delegated identity using our key
-                                identity = ArcIdentity::Delegated(Arc::new(
-                                    DelegatedIdentity::new_unchecked(
-                                        public_key,
-                                        Box::new(key.clone().as_arc_identity()),
-                                        delegations,
-                                    ),
-                                ));
-                            }
-                        }
-                        None => {
-                            // Need to delete storage - delegation chain is invalid
-                            #[cfg(feature = "tracing")]
-                            info!(
-                                "Found invalid delegation chain in storage - clearing credentials"
-                            );
-                            Self::delete_storage(&mut storage).await;
-
-                            // Reset to anonymous identity
-                            identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
-                            chain = Arc::new(Mutex::new(None));
-                        }
+            // First, extract the needed data from the lock without holding it across await
+            let delegation_data = {
+                let guard = chain.lock();
+                if let Some(chain_inner) = guard.as_ref() {
+                    if chain_inner.is_delegation_valid(None) {
+                        // Extract the data we need while we have the lock
+                        let public_key = chain_inner.public_key.clone();
+                        let delegations = chain_inner.delegations.clone();
+                        Some((public_key, delegations))
+                    } else {
+                        // Signal we need to delete storage if delegation is invalid
+                        None
                     }
+                } else {
+                    // No chain data
+                    Some((Vec::new(), Vec::new()))
+                }
+            };
+
+            // Now use the extracted data without holding the lock
+            match delegation_data {
+                Some((public_key, delegations)) => {
+                    if !public_key.is_empty() {
+                        // Create the delegated identity using our key
+                        identity =
+                            ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
+                                public_key,
+                                Box::new(key.clone().as_arc_identity()),
+                                delegations,
+                            )));
+                    }
+                }
+                None => {
+                    // Need to delete storage - delegation chain is invalid
+                    #[cfg(feature = "tracing")]
+                    info!("Found invalid delegation chain in storage - clearing credentials");
+                    Self::delete_storage(&mut storage).await;
+
+                    // Reset to anonymous identity
+                    identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+                    chain = Arc::new(Mutex::new(None));
                 }
             }
         }
@@ -257,6 +309,7 @@ impl AuthClient {
         &self,
         message: AuthResponseSuccess,
         on_success: Option<OnSuccess>,
+        on_success_async: Option<OnSuccessAsync>,
     ) -> Result<(), DelegationError> {
         // Take and drop the ActiveLogin struct, which handles all resource cleanup.
         let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
@@ -275,7 +328,7 @@ impl AuthClient {
                 .0
                 .storage
                 .lock()
-                .set(KEY_STORAGE_KEY, StoredKey::encode(key.raw_key()))
+                .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()))
                 .await;
         }
 
@@ -288,7 +341,10 @@ impl AuthClient {
             .0
             .storage
             .lock()
-            .set(KEY_STORAGE_DELEGATION, chain_json.clone())
+            .set(
+                KEY_STORAGE_DELEGATION,
+                StoredKey::String(chain_json.clone()),
+            )
             .await;
 
         // Now update the in-memory state
@@ -381,7 +437,10 @@ impl AuthClient {
         // on_success should be the last thing to do to avoid consumers
         // interfering by navigating or refreshing the page
         if let Some(on_success_cb) = on_success {
-            on_success_cb.lock()(message);
+            on_success_cb.0.lock()(message.clone());
+        }
+        if let Some(on_success_async_cb) = on_success_async {
+            on_success_async_cb.0.lock()(message).await;
         }
 
         Ok(())
@@ -426,13 +485,25 @@ impl AuthClient {
         ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
 
         // Create the URL of the IDP. (e.g. https://XXXX/#authorize)
-        let identity_provider_url: web_sys::Url =
-            options.identity_provider.clone().unwrap_or_else(|| {
-                match web_sys::Url::new(IDENTITY_PROVIDER_DEFAULT) {
-                    Ok(url) => url,
-                    Err(_) => unreachable!(),
+        let identity_provider_url = match options.identity_provider {
+            Some(ref url) => url as &str,
+            None => IDENTITY_PROVIDER_DEFAULT,
+        };
+
+        let identity_provider_url = match web_sys::Url::new(identity_provider_url) {
+            Ok(url) => url,
+            Err(_err) => {
+                #[cfg(feature = "tracing")]
+                {
+                    use wasm_bindgen::convert::TryFromJsValue;
+                    match String::try_from_js_value(_err) {
+                        Ok(msg) => error!("Failed to create URL: {}", msg),
+                        Err(_) => error!("Failed to create URL"),
+                    };
                 }
-            });
+                return;
+            }
+        };
 
         // Set the correct hash if it isn't already set.
         identity_provider_url.set_hash(IDENTITY_PROVIDER_ENDPOINT);
@@ -448,19 +519,32 @@ impl AuthClient {
             Ok(Some(window_handle)) => window_handle,
             Ok(None) => {
                 // Window opening was blocked by the browser (e.g., popup blocker)
-                if let Some(on_error) = options.on_error {
-                    on_error.lock()(Some(
-                        "Failed to open IdP window. Check popup blocker.".to_string(),
-                    ));
-                }
+                let on_error = options.on_error.clone();
+                let on_error_async = options.on_error_async.clone();
+                let error_message = "Failed to open IdP window. Check popup blocker.".to_string();
+                spawn_local(async move {
+                    if let Some(cb) = on_error {
+                        cb.0.lock()(Some(error_message.clone()));
+                    }
+                    if let Some(cb) = on_error_async {
+                        cb.0.lock()(Some(error_message)).await;
+                    }
+                });
                 return;
             }
             Err(e) => {
                 // Other error during window opening
                 let error_message = format!("Error opening IdP window: {:?}", e);
-                if let Some(on_error) = options.on_error {
-                    on_error.lock()(Some(error_message));
-                }
+                let on_error = options.on_error.clone();
+                let on_error_async = options.on_error_async.clone();
+                spawn_local(async move {
+                    if let Some(cb) = on_error {
+                        cb.0.lock()(Some(error_message.clone()));
+                    }
+                    if let Some(cb) = on_error_async {
+                        cb.0.lock()(Some(error_message)).await;
+                    }
+                });
                 return;
             }
         };
@@ -471,6 +555,7 @@ impl AuthClient {
         let interruption_check_task = {
             let idp_window_clone = idp_window.clone();
             let on_error_clone = options.on_error.clone();
+            let on_error_async_clone = options.on_error_async.clone();
 
             async move {
                 // Give the authentication process a moment to start before checking for interruptions
@@ -479,8 +564,12 @@ impl AuthClient {
                 loop {
                     if idp_window_clone.closed().unwrap_or(true) {
                         // Window is closed. This is a user interrupt.
+                        let error_message = ERROR_USER_INTERRUPT.to_string();
                         if let Some(on_error) = on_error_clone {
-                            on_error.lock()(Some(ERROR_USER_INTERRUPT.to_string()));
+                            on_error.0.lock()(Some(error_message.clone()));
+                        }
+                        if let Some(on_error_async) = on_error_async_clone {
+                            on_error_async.0.lock()(Some(error_message)).await;
                         }
                         // Clean up by taking the active_login from the client.
                         let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
@@ -541,16 +630,20 @@ impl AuthClient {
 
             let handle_error_wrapper = |error: String| {
                 let on_error = options.on_error.clone();
+                let on_error_async = options.on_error_async.clone();
                 spawn_local(async move {
                     #[cfg(feature = "tracing")]
-                    error!("AuthClient login failed in event handler: {}", error);
+                    error!("AuthClient login failed in event handler: {}", &error);
 
                     // Take and drop the ActiveLogin struct, which handles all resource cleanup.
                     let _ = ACTIVE_LOGIN.with(|cell| cell.borrow_mut().take());
 
                     // Call the error callback
                     if let Some(on_error_cb) = on_error {
-                        on_error_cb.lock()(Some(error));
+                        on_error_cb.0.lock()(Some(error.clone()));
+                    }
+                    if let Some(on_error_async_cb) = on_error_async {
+                        on_error_async_cb.0.lock()(Some(error)).await;
                     }
                 });
             };
@@ -569,10 +662,7 @@ impl AuthClient {
                                 .expect("Failed to get public key"),
                             max_time_to_live: Some(max_time_to_live),
                             allow_pin_authentication: options.allow_pin_authentication,
-                            derivation_origin: options
-                                .derivation_origin
-                                .clone()
-                                .map(|d| d.to_string().into()),
+                            derivation_origin: options.derivation_origin.clone(),
                         };
                         let request_js_value = match JsValue::from_serde(&request) {
                             Ok(value) => value,
@@ -601,7 +691,7 @@ impl AuthClient {
                         }
 
                         if let Some(custom_values) = options.custom_values.clone() {
-                            for (k, v) in custom_values {
+                            for (k, v) in custom_values.into_iter() {
                                 match JsValue::from_serde(&v) {
                                     Ok(value) => {
                                         if Reflect::set(
@@ -639,16 +729,19 @@ impl AuthClient {
                     IdentityServiceResponseKind::AuthSuccess(response) => {
                         let client_clone = client.clone();
                         let on_success = options.on_success.clone();
+                        let on_success_async = options.on_success_async.clone();
                         let on_error = options.on_error.clone();
                         spawn_local(async move {
-                            if let Err(e) = client_clone.handle_success(response, on_success).await
+                            if let Err(e) = client_clone
+                                .handle_success(response, on_success, on_success_async)
+                                .await
                             {
                                 // Handle potential errors from handle_success itself
                                 #[cfg(feature = "tracing")]
                                 error!("Error during handle_success: {}", e);
                                 // Optionally call on_error here as well
                                 if let Some(on_error_cb) = on_error {
-                                    on_error_cb.lock()(Some(format!(
+                                    on_error_cb.0.lock()(Some(format!(
                                         "Error processing successful login: {:?}",
                                         e
                                     )));
@@ -799,17 +892,10 @@ impl AuthClientBuilder {
         self
     }
 
-    /// A callback function to be executed when the system becomes idle.
-    /// Note: This replaces any existing callbacks. Use `add_on_idle` for multiple.
-    pub fn on_idle(mut self, on_idle: fn()) -> Self {
-        self.idle_options_mut().idle_manager_options.on_idle = Arc::new(Mutex::new(vec![
-            Box::new(on_idle) as Box<dyn FnMut() + Send>,
-        ]));
-        self
-    }
-
-    /// Adds a callback function to be executed when the system becomes idle.
-    pub fn add_on_idle<F>(mut self, on_idle: F) -> Self
+    /// Sets a callback to be executed when the system becomes idle.
+    ///
+    /// It is possible to set multiple callbacks.
+    pub fn on_idle<F>(mut self, on_idle: F) -> Self
     where
         F: FnMut() + Send + 'static,
     {
@@ -969,10 +1055,11 @@ impl From<DelegatedIdentity> for ArcIdentity {
 }
 
 /// Options for the [`AuthClient::login_with_options`].
-#[derive(Clone, Default)]
+#[derive(Clone, Default, bon::Builder)]
+#[builder(on(String, into))]
 pub struct AuthClientLoginOptions {
     /// The URL of the identity provider.
-    identity_provider: Option<web_sys::Url>,
+    identity_provider: Option<String>,
 
     /// Expiration of the authentication in nanoseconds.
     max_time_to_live: Option<u64>,
@@ -985,7 +1072,7 @@ pub struct AuthClientLoginOptions {
     /// Origin for Identity Provider to use while generating the delegated identity. For II, the derivation origin must authorize this origin by setting a record at `<derivation-origin>/.well-known/ii-alternative-origins`.
     ///
     /// See: <https://github.com/dfinity/internet-identity/blob/main/docs/ii-spec.mdx#alternative-frontend-origins>
-    derivation_origin: Option<web_sys::Url>,
+    derivation_origin: Option<String>,
 
     /// Auth Window feature config string.
     ///
@@ -996,124 +1083,23 @@ pub struct AuthClientLoginOptions {
     window_opener_features: Option<String>,
 
     /// Callback once login has completed.
+    #[builder(into)]
     on_success: Option<OnSuccess>,
 
+    /// Async callback once login has completed.
+    #[builder(into)]
+    on_success_async: Option<OnSuccessAsync>,
+
     /// Callback in case authentication fails.
+    #[builder(into)]
     on_error: Option<OnError>,
 
-    /// Extra values to be passed in the login request during the authorize-ready phase.
-    custom_values: Option<HashMap<String, serde_json::Value>>,
-}
-
-impl AuthClientLoginOptions {
-    /// Creates a new [`AuthClientLoginOptionsBuilder`].
-    pub fn builder() -> AuthClientLoginOptionsBuilder {
-        AuthClientLoginOptionsBuilder::new()
-    }
-}
-
-/// Builder for the [`AuthClientLoginOptions`].
-pub struct AuthClientLoginOptionsBuilder {
-    identity_provider: Option<web_sys::Url>,
-    max_time_to_live: Option<u64>,
-    allow_pin_authentication: Option<bool>,
-    derivation_origin: Option<web_sys::Url>,
-    window_opener_features: Option<String>,
-    on_success: Option<Box<dyn FnMut(AuthResponseSuccess) + Send>>,
-    on_error: Option<Box<dyn FnMut(Option<String>) + Send>>,
-    custom_values: Option<HashMap<String, serde_json::Value>>,
-}
-
-impl AuthClientLoginOptionsBuilder {
-    fn new() -> Self {
-        Self {
-            identity_provider: None,
-            max_time_to_live: None,
-            allow_pin_authentication: None,
-            derivation_origin: None,
-            window_opener_features: None,
-            on_success: None,
-            on_error: None,
-            custom_values: None,
-        }
-    }
-
-    /// The URL of the identity provider.
-    pub fn identity_provider(mut self, identity_provider: web_sys::Url) -> Self {
-        self.identity_provider = Some(identity_provider);
-        self
-    }
-
-    /// Expiration of the authentication in nanoseconds.
-    pub fn max_time_to_live(mut self, max_time_to_live: u64) -> Self {
-        self.max_time_to_live = Some(max_time_to_live);
-        self
-    }
-
-    /// If present, indicates whether or not the Identity Provider should allow the user to authenticate and/or register using a temporary key/PIN identity.
-    ///
-    /// Authenticating dapps may want to prevent users from using Temporary keys/PIN identities because Temporary keys/PIN identities are less secure than Passkeys (webauthn credentials) and because Temporary keys/PIN identities generally only live in a browser database (which may get cleared by the browser/OS).
-    pub fn allow_pin_authentication(mut self, allow_pin_authentication: bool) -> Self {
-        self.allow_pin_authentication = Some(allow_pin_authentication);
-        self
-    }
-
-    /// Origin for Identity Provider to use while generating the delegated identity. For II, the derivation origin must authorize this origin by setting a record at `<derivation-origin>/.well-known/ii-alternative-origins`.
-    ///
-    /// See: <https://github.com/dfinity/internet-identity/blob/main/docs/ii-spec.mdx#alternative-frontend-origins>
-    pub fn derivation_origin(mut self, derivation_origin: web_sys::Url) -> Self {
-        self.derivation_origin = Some(derivation_origin);
-        self
-    }
-
-    /// Auth Window feature config string.
-    ///
-    /// # Example
-    /// ```ignore
-    /// toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100
-    /// ```
-    pub fn window_opener_features(mut self, window_opener_features: String) -> Self {
-        self.window_opener_features = Some(window_opener_features);
-        self
-    }
-
-    /// Callback once login has completed.
-    pub fn on_success<F>(mut self, on_success: F) -> Self
-    where
-        F: FnMut(AuthResponseSuccess) + Send + 'static,
-    {
-        self.on_success = Some(Box::new(on_success));
-        self
-    }
-
-    /// Callback in case authentication fails.
-    pub fn on_error<F>(mut self, on_error: F) -> Self
-    where
-        F: FnMut(Option<String>) + Send + 'static,
-    {
-        self.on_error = Some(Box::new(on_error));
-        self
-    }
+    /// Async callback in case authentication fails.
+    #[builder(into)]
+    on_error_async: Option<OnErrorAsync>,
 
     /// Extra values to be passed in the login request during the authorize-ready phase.
-    pub fn custom_values(mut self, custom_values: HashMap<String, serde_json::Value>) -> Self {
-        self.custom_values = Some(custom_values);
-        self
-    }
-
-    /// Build the [`AuthClientLoginOptions`].
-    pub fn build(self) -> AuthClientLoginOptions {
-        AuthClientLoginOptions {
-            identity_provider: self.identity_provider,
-            max_time_to_live: self.max_time_to_live,
-            allow_pin_authentication: self.allow_pin_authentication,
-            derivation_origin: self.derivation_origin,
-            window_opener_features: self.window_opener_features,
-            on_success: self.on_success.map(|f| Arc::new(Mutex::new(f))),
-            on_error: self.on_error.map(|f| Arc::new(Mutex::new(f))),
-            custom_values: self.custom_values,
-        }
-    }
+    custom_values: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Options for creating a new [`AuthClient`].
