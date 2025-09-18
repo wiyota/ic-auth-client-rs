@@ -1,12 +1,12 @@
+use super::{Context, IdleManager, IdleManagerOptions};
 use futures::channel::{mpsc, oneshot};
 use gloo_utils::window;
 use parking_lot::Mutex;
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{Event, Window};
 
-type Callback = Box<dyn FnMut() + Send>;
 type JsCallback = Closure<dyn FnMut(Event)>;
 
 const EVENTS: [&str; 6] = [
@@ -66,13 +66,7 @@ impl Drop for JsContext {
     }
 }
 
-// Context contains only states that can be shared among threads
-#[derive(Default)]
-struct Context {
-    callbacks: Arc<Mutex<Vec<Callback>>>,
-}
-
-enum JsMessage {
+pub enum JsMessage {
     ResetTimer(u32),
     Cleanup,
     CleanupWithCallbacks,
@@ -87,7 +81,7 @@ struct JsHandler {
     current_scroll_debounce_timer: Option<i32>,
     exit_closure: Option<Closure<dyn FnMut()>>,
     reset_closure: Option<Closure<dyn FnMut()>>,
-    callbacks: Arc<Mutex<Vec<Callback>>>,
+    callbacks: Arc<Mutex<Vec<super::Callback>>>,
     idle_timeout: u32,
 }
 
@@ -95,7 +89,7 @@ impl JsHandler {
     fn new(
         receiver: mpsc::Receiver<JsMessage>,
         sender: mpsc::Sender<JsMessage>,
-        callbacks: Arc<Mutex<Vec<Callback>>>,
+        callbacks: Arc<Mutex<Vec<super::Callback>>>,
         idle_timeout: u32,
     ) -> Self {
         Self {
@@ -245,17 +239,6 @@ impl JsHandler {
     }
 }
 
-/// IdleManager is a struct that manages idle state and events.
-/// It provides functionality to register callbacks that are triggered when the system becomes idle,
-/// and to reset the idle timer when certain events occur.
-#[derive(Clone)]
-pub struct IdleManager {
-    context: Arc<Mutex<Context>>,
-    idle_timeout: u32,
-    js_sender: Arc<Mutex<mpsc::Sender<JsMessage>>>,
-    is_initialized: Arc<Mutex<bool>>,
-}
-
 impl std::fmt::Debug for IdleManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IdleManager")
@@ -277,11 +260,6 @@ impl Drop for IdleManager {
 }
 
 impl IdleManager {
-    /// Default idle timeout duration in milliseconds (10 minutes).
-    const DEFAULT_IDLE_TIMEOUT: u32 = 10 * 60 * 1000;
-    /// Default scroll debounce duration in milliseconds.
-    const DEFAULT_SCROLL_DEBOUNCE: u32 = 100;
-
     /// Constructs a new [`IdleManager`] with the given options.
     pub fn new(options: Option<IdleManagerOptions>) -> Self {
         let callbacks = options
@@ -369,18 +347,6 @@ impl IdleManager {
         Box::leak(Box::new(js_context));
     }
 
-    /// Registers a callback to be executed when the system becomes idle.
-    pub fn register_callback<F>(&self, callback: F)
-    where
-        F: FnMut() + Send + 'static,
-    {
-        self.context
-            .lock()
-            .callbacks
-            .lock()
-            .push(Box::new(callback));
-    }
-
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
     pub fn exit(&mut self) {
         use futures::SinkExt;
@@ -393,90 +359,13 @@ impl IdleManager {
         // The callbacks will be executed by JsHandler::handle_cleanup
     }
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
-    fn reset_timer(&self) {
+    pub fn reset_timer(&self) {
         use futures::SinkExt;
         let mut sender_clone = self.js_sender.lock().clone();
         let timeout = self.idle_timeout;
         spawn_local(async move {
             let _ = sender_clone.send(JsMessage::ResetTimer(timeout)).await;
         });
-    }
-}
-/// IdleManagerOptions is a struct that contains options for configuring an [`IdleManager`].
-#[derive(Default, Clone)]
-pub struct IdleManagerOptions {
-    /// A callback function to be executed when the system becomes idle.
-    pub on_idle: Arc<Mutex<Vec<Callback>>>,
-    /// The duration of inactivity after which the system is considered idle in milliseconds.
-    pub idle_timeout: Option<u32>,
-    /// A flag indicating whether to capture scroll events.
-    pub capture_scroll: Option<bool>,
-    /// A delay for debouncing scroll events in milliseconds.
-    pub scroll_debounce: Option<u32>,
-}
-
-impl std::fmt::Debug for IdleManagerOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let callback_count = self.on_idle.lock().len();
-        f.debug_struct("IdleManagerOptions")
-            .field("on_idle", &format!("{} callbacks", callback_count))
-            .field("idle_timeout", &self.idle_timeout)
-            .field("capture_scroll", &self.capture_scroll)
-            .field("scroll_debounce", &self.scroll_debounce)
-            .finish()
-    }
-}
-
-impl IdleManagerOptions {
-    /// Returns a new `IdleManagerOptionsBuilder` to construct an `IdleManagerOptions` struct.
-    pub fn builder() -> IdleManagerOptionsBuilder {
-        IdleManagerOptionsBuilder::default()
-    }
-}
-
-/// Builder for the [`IdleManagerOptions`].
-#[derive(Default)]
-pub struct IdleManagerOptionsBuilder {
-    on_idle: Vec<Callback>,
-    idle_timeout: Option<u32>,
-    capture_scroll: Option<bool>,
-    scroll_debounce: Option<u32>,
-}
-
-impl IdleManagerOptionsBuilder {
-    /// A callback function to be executed when the system becomes idle.
-    pub fn on_idle(mut self, on_idle: fn()) -> Self {
-        self.on_idle
-            .push(Box::new(on_idle) as Box<dyn FnMut() + Send>);
-        self
-    }
-
-    /// The duration of inactivity after which the system is considered idle in milliseconds.
-    pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
-        self.idle_timeout = Some(idle_timeout);
-        self
-    }
-
-    /// A flag indicating whether to capture scroll events.
-    pub fn capture_scroll(mut self, capture_scroll: bool) -> Self {
-        self.capture_scroll = Some(capture_scroll);
-        self
-    }
-
-    /// A delay for debouncing scroll events in milliseconds.
-    pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
-        self.scroll_debounce = Some(scroll_debounce);
-        self
-    }
-
-    /// Builds the [`IdleManagerOptions`] struct.
-    pub fn build(self) -> IdleManagerOptions {
-        IdleManagerOptions {
-            on_idle: Arc::new(Mutex::new(self.on_idle)),
-            idle_timeout: self.idle_timeout,
-            capture_scroll: self.capture_scroll,
-            scroll_debounce: self.scroll_debounce,
-        }
     }
 }
 
