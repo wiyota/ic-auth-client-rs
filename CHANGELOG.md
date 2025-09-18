@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `on_success_async` and `on_error_async` for handling asynchronous closures in `AuthClientLoginOptions`
 - Public API types (`InternetIdentityAuthRequest`, `IdentityServiceResponseMessage`, `IdentityServiceResponseKind`) for external usage
 - `parking_lot` dependency for improved mutex performance
 
@@ -17,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Restructured codebase with platform-specific modules (`auth_client`, `idle_manager`, `storage`)
 - **BREAKING**: WASM-specific dependencies (`gloo-*`, `web-sys`) now optional behind `wasm-js` feature flag
 - **BREAKING**: `AuthClient` methods `login()` and `logout()` now use `&self` instead of `&mut self`
+- **BREAKING**: `web_sys::Url` used in `AuthClientLoginOptions` has been replaced with `String`. This is a specification change to prepare for future platform compatibility
+- **BREAKING**: Several changes have been made to the configuration of builder methods for optional structures
+- `on_success` and `on_error` can now be used with both synchronous and asynchronous closures
 - Improved resource management in WASM with RAII pattern using `ActiveLogin` struct
 - Replaced custom sleep utility with `gloo-timers` for better async compatibility
 
@@ -42,12 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **(Breaking)**: Updated `ic-agent` dependency to **v0.44**.
-
-- **(Breaking)**: Deprecate the `ed25519-consensus` crate for private keys and use `ic-ed25519` instead.
-
+- **Breaking**: Updated `ic-agent` dependency to **v0.44**.
+- **Breaking**: Deprecate the `ed25519-consensus` crate for private keys and use `ic-ed25519` instead.
 - Internal values now update correctly upon login/logout, eliminating the need for page refreshes.
-
 - Bump MSRV from `1.56.0` to `1.85.0`.
 
 ### Refactored
@@ -62,17 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **(Breaking)**: Updated `ic-agent` dependency to **v0.40**.
+- **Breaking**: Updated `ic-agent` dependency to **v0.40**.
   This version is **not** compatible with previous versions.
 
 ### Removed
 
-- **(Breaking)**: Removed `IdentityType`.
+- **Breaking**: Removed `IdentityType`.
   Use `ArcIdentity` as a replacement.
 
 ### Refactored
 
-- **(Breaking)**: Reorganized some internal build patterns.
+- **Breaking**: Reorganized some internal build patterns.
   These changes may impact specific build or integration scenarios.
 
 ## [0.3.1] - 2024-11-14

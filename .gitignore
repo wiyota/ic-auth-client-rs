@@ -1,4 +1,4 @@
-# rust
+# Rust
 debug/
 target/
 **/*.rs.bk
@@ -6,12 +6,16 @@ target/
 Cargo.lock
 pkg/
 
+# JavaScript
+node_modules/
+
 # Various IDEs and Editors
 .vscode/
 .idea/
 .zed/
 
-# OS
+# Logging
+log/
 
-## MacOS
+# OS
 .DS_Store
