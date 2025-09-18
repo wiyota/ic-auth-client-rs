@@ -22,6 +22,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 base64 = "0.22"
+bon = "3"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 futures = "0.3"
 ic-agent = { version = "0.44", default-features = false }

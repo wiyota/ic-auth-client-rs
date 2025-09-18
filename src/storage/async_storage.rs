@@ -1,10 +1,8 @@
-use super::{AuthClientStorage, DecodeError, StoredKey};
+use super::{DecodeError, StoredKey};
 use web_sys::{Storage, wasm_bindgen::JsValue};
 
 const LOCAL_STORAGE_PREFIX: &str = "ic-";
 
-#[cfg(target_family = "wasm")]
-#[cfg(feature = "wasm-js")]
 impl From<DecodeError> for JsValue {
     fn from(err: DecodeError) -> Self {
         JsValue::from_str(&err.to_string())
@@ -17,7 +15,7 @@ pub struct LocalStorage;
 
 impl LocalStorage {
     pub fn new() -> Self {
-        LocalStorage
+        Self
     }
 
     fn get_local_storage(&self) -> Option<Storage> {
@@ -47,12 +45,16 @@ impl AuthClientStorage for LocalStorage {
         value.map(StoredKey::String)
     }
 
-    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) -> Result<(), ()> {
+    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
         let local_storage = match self.get_local_storage() {
             Some(local_storage) => local_storage,
             None => return Err(()),
         };
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
+        let value = match value {
+            StoredKey::String(value) => value,
+            StoredKey::Raw(value) => StoredKey::encode(&value),
+        };
         match local_storage.set_item(&key, value.as_ref()) {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -99,7 +101,7 @@ impl AuthClientStorage for AuthClientStorageType {
         }
     }
 
-    async fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, key: S, value: T) -> Result<(), ()> {
+    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
         match self {
             AuthClientStorageType::LocalStorage(storage) => storage.set(key, value).await,
         }
@@ -112,6 +114,19 @@ impl AuthClientStorage for AuthClientStorageType {
     }
 }
 
+/// Trait for persisting user authentication data.
+pub trait AuthClientStorage {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;
+
+    fn set<T: AsRef<str>>(
+        &mut self,
+        key: T,
+        value: StoredKey,
+    ) -> impl Future<Output = Result<(), ()>>;
+
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Result<(), ()>>;
+}
+
 #[allow(dead_code)]
 #[cfg(test)]
 mod tests {
@@ -121,7 +136,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_local_storage() {
         let mut storage = LocalStorage;
-        storage.set("test", "value").await.unwrap();
+        let value = StoredKey::String("value".to_string());
+        storage.set("test", value).await.unwrap();
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));
         storage.remove("test").await.unwrap();
@@ -132,7 +148,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_auth_client_storage_type() {
         let mut storage = AuthClientStorageType::LocalStorage(LocalStorage);
-        storage.set("test", "value").await.unwrap();
+        let value = StoredKey::String("value".to_string());
+        storage.set("test", value).await.unwrap();
         let value = storage.get("test").await.unwrap();
         assert_eq!(value, StoredKey::String("value".to_string()));
         storage.remove("test").await.unwrap();

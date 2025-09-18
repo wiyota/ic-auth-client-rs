@@ -1,17 +1,10 @@
 use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine as _};
-use std::future::Future;
 
-#[cfg(not(target_family = "wasm"))]
-mod native;
 #[cfg(target_family = "wasm")]
 #[cfg(feature = "wasm-js")]
-mod wasm_js;
-
+pub mod async_storage;
 #[cfg(not(target_family = "wasm"))]
-pub use native::*;
-#[cfg(target_family = "wasm")]
-#[cfg(feature = "wasm-js")]
-pub use wasm_js::*;
+pub mod sync_storage;
 
 /// A key for storing the identity key pair.
 pub const KEY_STORAGE_KEY: &str = "identity";
@@ -23,6 +16,7 @@ pub(crate) const KEY_VECTOR: &str = "iv";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredKey {
     String(String),
+    Raw([u8; 32]),
 }
 
 impl StoredKey {
@@ -37,11 +31,29 @@ impl StoredKey {
                     .map_err(|_| DecodeError::Ed25519("Invalid slice length".to_string()))?;
                 Ok(bytes)
             }
+            StoredKey::Raw(bytes) => Ok(*bytes),
         }
     }
 
     pub fn encode(key: &[u8; 32]) -> String {
         BASE64_STANDARD_NO_PAD.encode(key)
+    }
+}
+
+impl From<[u8; 32]> for StoredKey {
+    fn from(value: [u8; 32]) -> Self {
+        StoredKey::Raw(value)
+    }
+}
+
+impl TryFrom<Vec<u8>> for StoredKey {
+    type Error = DecodeError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        let bytes: [u8; 32] = value
+            .try_into()
+            .map_err(|_| DecodeError::Ed25519("Invalid slice length".to_string()))?;
+        Ok(StoredKey::Raw(bytes))
     }
 }
 
@@ -57,19 +69,6 @@ pub enum DecodeError {
     Ed25519(String),
     #[error("Base64 error: {0}")]
     Base64(base64::DecodeError),
-}
-
-/// Trait for persisting user authentication data.
-pub trait AuthClientStorage {
-    fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;
-
-    fn set<S: AsRef<str>, T: AsRef<str>>(
-        &mut self,
-        key: S,
-        value: T,
-    ) -> impl Future<Output = Result<(), ()>>;
-
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Result<(), ()>>;
 }
 
 #[cfg(test)]

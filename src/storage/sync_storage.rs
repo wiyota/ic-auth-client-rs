@@ -1,0 +1,106 @@
+use super::StoredKey;
+use keyring::Entry;
+
+const KEYRING_STORAGE_PREFIX: &str = "ic-";
+
+/// Implementation of [`AuthClientStorage`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KeyringStorage {
+    service_name: &'static str,
+}
+
+impl KeyringStorage {
+    pub fn new(service_name: &'static str) -> Self {
+        Self { service_name }
+    }
+}
+
+impl AuthClientStorage for KeyringStorage {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
+        let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
+        let entry = match Entry::new(self.service_name, &key) {
+            Ok(entry) => entry,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not create keyring entry: {_e:?}");
+                return None;
+            }
+        };
+        let value = match entry.get_secret() {
+            Ok(value) => value,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not get item from keyring: {_e:?}");
+                return None;
+            }
+        };
+        match value.try_into() {
+            Ok(value) => Some(value),
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not convert value to StoredKey: {_e:?}");
+                None
+            }
+        }
+    }
+
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
+        let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
+        let entry = match Entry::new(self.service_name, &key) {
+            Ok(entry) => entry,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not create keyring entry: {_e:?}");
+                return Err(());
+            }
+        };
+        let value = match value {
+            StoredKey::String(_) => match value.decode() {
+                Ok(value) => value,
+                Err(_) => {
+                    #[cfg(feature = "tracing")]
+                    error!("Could not decode string value");
+                    return Err(());
+                }
+            },
+            StoredKey::Raw(value) => value,
+        };
+        match entry.set_secret(&value) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not set item in keyring");
+                Err(())
+            }
+        }
+    }
+
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+        let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
+        let entry = match Entry::new(self.service_name, &key) {
+            Ok(entry) => entry,
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not create keyring entry: {_e:?}");
+                return Err(());
+            }
+        };
+        match entry.delete_credential() {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not remove item from keyring");
+                Err(())
+            }
+        }
+    }
+}
+
+/// Trait for persisting user authentication data.
+pub trait AuthClientStorage {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey>;
+
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()>;
+
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()>;
+}
