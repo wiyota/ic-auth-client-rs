@@ -27,7 +27,8 @@ pub struct InternetIdentityAuthRequest {
 ///
 /// This struct is used to store the details of a successful authentication response from the Internet Identity Service.
 /// It includes the delegations, the user's public key, and the authentication method used.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthResponseSuccess {
     /// The delegations provided by the user during the authentication process.
     pub delegations: Vec<SignedDelegation>,
