@@ -4,13 +4,13 @@ use keyring::Entry;
 const KEYRING_STORAGE_PREFIX: &str = "ic-";
 
 /// Implementation of [`AuthClientStorage`].
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct KeyringStorage {
-    service_name: &'static str,
+    service_name: String,
 }
 
 impl KeyringStorage {
-    pub fn new(service_name: &'static str) -> Self {
+    pub fn new(service_name: String) -> Self {
         Self { service_name }
     }
 }
@@ -18,7 +18,7 @@ impl KeyringStorage {
 impl AuthClientStorage for KeyringStorage {
     fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(self.service_name, &key) {
+        let entry = match Entry::new(&self.service_name, &key) {
             Ok(entry) => entry,
             Err(_e) => {
                 #[cfg(feature = "tracing")]
@@ -28,11 +28,7 @@ impl AuthClientStorage for KeyringStorage {
         };
         let value = match entry.get_secret() {
             Ok(value) => value,
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not get item from keyring: {_e:?}");
-                return None;
-            }
+            Err(_e) => return None,
         };
         match value.try_into() {
             Ok(value) => Some(value),
@@ -46,7 +42,7 @@ impl AuthClientStorage for KeyringStorage {
 
     fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(self.service_name, &key) {
+        let entry = match Entry::new(&self.service_name, &key) {
             Ok(entry) => entry,
             Err(_e) => {
                 #[cfg(feature = "tracing")]
@@ -77,7 +73,7 @@ impl AuthClientStorage for KeyringStorage {
 
     fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(self.service_name, &key) {
+        let entry = match Entry::new(&self.service_name, &key) {
             Ok(entry) => entry,
             Err(_e) => {
                 #[cfg(feature = "tracing")]
@@ -92,6 +88,32 @@ impl AuthClientStorage for KeyringStorage {
                 error!("Could not remove item from keyring");
                 Err(())
             }
+        }
+    }
+}
+
+/// Enum for selecting the type of storage to use for [`AuthClient`](super::AuthClient).
+#[derive(Debug, Clone)]
+pub enum AuthClientStorageType {
+    Keyring(KeyringStorage),
+}
+
+impl AuthClientStorage for AuthClientStorageType {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
+        match self {
+            AuthClientStorageType::Keyring(storage) => storage.get(key),
+        }
+    }
+
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
+        match self {
+            AuthClientStorageType::Keyring(storage) => storage.set(key, value),
+        }
+    }
+
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+        match self {
+            AuthClientStorageType::Keyring(storage) => storage.remove(key),
         }
     }
 }
