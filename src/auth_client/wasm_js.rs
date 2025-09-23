@@ -28,7 +28,7 @@ use web_sys::{
     wasm_bindgen::{JsCast, JsValue},
 };
 
-const IDENTITY_PROVIDER_DEFAULT: &str = "https://identity.ic0.app";
+const IDENTITY_PROVIDER_DEFAULT: &str = "https://identity.internetcomputer.org";
 const IDENTITY_PROVIDER_ENDPOINT: &str = "#authorize";
 
 const ED25519_KEY_LABEL: &str = "Ed25519";
