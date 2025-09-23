@@ -1,3 +1,7 @@
+use super::{
+    ArcIdentity, AuthClientLoginOptions, BaseKeyType, IdleOptions, Key, KeyWithRaw, OnError,
+    OnErrorAsync, OnSuccess, OnSuccessAsync,
+};
 use crate::{
     api::{
         AuthResponseSuccess, IdentityServiceResponseKind, IdentityServiceResponseMessage,
@@ -10,18 +14,16 @@ use crate::{
     },
     util::delegation_chain::DelegationChain,
 };
-use ed25519_dalek::SigningKey;
 use futures::future::{AbortHandle, Abortable, BoxFuture};
 use gloo_events::EventListener;
 use gloo_utils::{format::JsValueSerdeExt, window};
 use ic_agent::{
     export::Principal,
-    identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, DelegationError, Identity},
+    identity::{AnonymousIdentity, DelegatedIdentity, DelegationError, Identity},
 };
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
-use std::{cell::RefCell, fmt, future::Future, sync::Arc, time::Duration};
+use std::{cell::RefCell, future::Future, sync::Arc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
     Location, MessageEvent,
@@ -36,60 +38,6 @@ const ED25519_KEY_LABEL: &str = "Ed25519";
 const INTERRUPT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 /// The error message when a user interrupts the authentication process.
 pub const ERROR_USER_INTERRUPT: &str = "UserInterrupt";
-
-#[derive(Clone)]
-struct OnSuccess(Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>);
-
-impl<F> From<F> for OnSuccess
-where
-    F: FnMut(AuthResponseSuccess) + Send + 'static,
-{
-    fn from(f: F) -> Self {
-        OnSuccess(Arc::new(Mutex::new(Box::new(f))))
-    }
-}
-
-#[derive(Clone)]
-struct OnSuccessAsync(
-    Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) -> BoxFuture<'static, ()> + Send>>>,
-);
-
-impl<F, Fut> From<F> for OnSuccessAsync
-where
-    F: FnMut(AuthResponseSuccess) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    fn from(mut f: F) -> Self {
-        use futures::future::FutureExt;
-        OnSuccessAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
-    }
-}
-
-#[derive(Clone)]
-struct OnError(Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>);
-
-impl<F> From<F> for OnError
-where
-    F: FnMut(Option<String>) + Send + 'static,
-{
-    fn from(f: F) -> Self {
-        OnError(Arc::new(Mutex::new(Box::new(f))))
-    }
-}
-
-#[derive(Clone)]
-struct OnErrorAsync(Arc<Mutex<Box<dyn FnMut(Option<String>) -> BoxFuture<'static, ()> + Send>>>);
-
-impl<F, Fut> From<F> for OnErrorAsync
-where
-    F: FnMut(Option<String>) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    fn from(mut f: F) -> Self {
-        use futures::future::FutureExt;
-        OnErrorAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
-    }
-}
 
 thread_local! {
     static ACTIVE_LOGIN: RefCell<Option<ActiveLogin>> = RefCell::new(None);
@@ -169,7 +117,7 @@ impl AuthClient {
                     Key::WithRaw(KeyWithRaw::new(private_key))
                 } else {
                     let mut rng = rand::thread_rng();
-                    let private_key = SigningKey::generate(&mut rng).to_bytes();
+                    let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
                     let _ = storage
                         .set(
                             KEY_STORAGE_KEY,
@@ -185,25 +133,24 @@ impl AuthClient {
             Key::WithRaw(k) => k.identity.clone(),
             Key::Identity(i) => i.clone(),
         };
-        let mut chain: Arc<Mutex<Option<DelegationChain>>> = Arc::new(Mutex::new(None));
+        let mut chain: Option<DelegationChain> = None;
 
         // Now we definitely have a key, we can load delegation if it exists
-        let chain_storage = storage.get(KEY_STORAGE_DELEGATION).await;
+        let chain_stored = storage.get(KEY_STORAGE_DELEGATION).await;
 
-        if let Some(chain_storage) = chain_storage {
-            let chain_storage = match chain_storage {
-                StoredKey::String(chain_storage) => chain_storage,
-                StoredKey::Raw(chain_storage) => StoredKey::encode(&chain_storage),
+        if let Some(chain_stored) = chain_stored {
+            let chain_stored = match chain_stored {
+                StoredKey::String(chain_stored) => chain_stored,
+                StoredKey::Raw(chain_stored) => StoredKey::encode(&chain_stored),
             };
 
             // Try to load the delegation chain
-            let chain_result = DelegationChain::from_json(&chain_storage);
-            chain = Arc::new(Mutex::new(Some(chain_result)));
+            let chain_result = DelegationChain::from_json(&chain_stored);
+            chain = Some(chain_result);
 
             // First, extract the needed data from the lock without holding it across await
             let delegation_data = {
-                let guard = chain.lock();
-                if let Some(chain_inner) = guard.as_ref() {
+                if let Some(chain_inner) = chain.as_ref() {
                     if chain_inner.is_delegation_valid(None) {
                         // Extract the data we need while we have the lock
                         let public_key = chain_inner.public_key.clone();
@@ -227,7 +174,7 @@ impl AuthClient {
                         identity =
                             ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
                                 public_key,
-                                Box::new(key.clone().as_arc_identity()),
+                                Box::new(key.as_arc_identity()),
                                 delegations,
                             )));
                     }
@@ -240,7 +187,7 @@ impl AuthClient {
 
                     // Reset to anonymous identity
                     identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
-                    chain = Arc::new(Mutex::new(None));
+                    chain = None;
                 }
             }
         }
@@ -251,7 +198,7 @@ impl AuthClient {
             .as_ref()
             .and_then(|o| o.disable_idle)
             .unwrap_or(false)
-            && (chain.lock().is_some() || options_identity_is_some)
+            && (chain.is_some() || options_identity_is_some)
         {
             let idle_manager_options: Option<IdleManagerOptions> = options
                 .idle_options
@@ -264,7 +211,7 @@ impl AuthClient {
             identity: Arc::new(Mutex::new(identity)),
             key,
             storage: Mutex::new(storage),
-            chain,
+            chain: Arc::new(Mutex::new(chain)),
             idle_manager: Mutex::new(idle_manager),
             idle_options: options.idle_options,
         })))
@@ -451,6 +398,7 @@ impl AuthClient {
         self.0.identity.lock().as_arc_identity()
     }
 
+    /// Returns the principal of the user.
     pub fn principal(&self) -> Result<Principal, String> {
         self.identity().sender()
     }
@@ -793,9 +741,6 @@ impl AuthClient {
                     #[cfg(feature = "tracing")]
                     error!("Failed to set href during logout (no history)");
                 }
-            } else {
-                #[cfg(feature = "tracing")]
-                error!("Failed to get href from return_to location during logout");
             }
         }
     }
@@ -939,171 +884,8 @@ impl AuthClientBuilder {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct KeyWithRaw {
-    key: [u8; 32],
-    identity: ArcIdentity,
-}
-
-impl KeyWithRaw {
-    pub fn new(raw_key: [u8; 32]) -> Self {
-        KeyWithRaw {
-            key: raw_key,
-            identity: ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&raw_key))),
-        }
-    }
-
-    pub fn raw_key(&self) -> &[u8; 32] {
-        &self.key
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Key {
-    WithRaw(KeyWithRaw),
-    Identity(ArcIdentity),
-}
-
-impl Key {
-    pub fn as_arc_identity(&self) -> Arc<dyn Identity> {
-        match self {
-            Key::WithRaw(key) => key.identity.as_arc_identity(),
-            Key::Identity(identity) => identity.as_arc_identity(),
-        }
-    }
-
-    pub fn public_key(&self) -> Option<Vec<u8>> {
-        match self {
-            Key::WithRaw(key) => key.identity.public_key(),
-            Key::Identity(identity) => identity.public_key(),
-        }
-    }
-}
-
-impl From<Key> for ArcIdentity {
-    fn from(key: Key) -> Self {
-        match key {
-            Key::WithRaw(key) => key.identity,
-            Key::Identity(identity) => identity,
-        }
-    }
-}
-
-impl From<ArcIdentity> for Key {
-    fn from(identity: ArcIdentity) -> Self {
-        Key::Identity(identity)
-    }
-}
-
-#[derive(Clone)]
-pub enum ArcIdentity {
-    Anonymous(Arc<AnonymousIdentity>),
-    Ed25519(Arc<BasicIdentity>),
-    Delegated(Arc<DelegatedIdentity>),
-}
-
-impl Default for ArcIdentity {
-    fn default() -> Self {
-        ArcIdentity::Anonymous(Arc::new(AnonymousIdentity))
-    }
-}
-
-impl fmt::Debug for ArcIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ArcIdentity::Anonymous(_) => write!(f, "ArcIdentity::Anonymous"),
-            ArcIdentity::Ed25519(_) => write!(f, "ArcIdentity::Ed25519"),
-            ArcIdentity::Delegated(_) => write!(f, "ArcIdentity::Delegated"),
-        }
-    }
-}
-
-impl ArcIdentity {
-    fn as_arc_identity(&self) -> Arc<dyn Identity> {
-        match self {
-            ArcIdentity::Anonymous(id) => id.clone(),
-            ArcIdentity::Ed25519(id) => id.clone(),
-            ArcIdentity::Delegated(id) => id.clone(),
-        }
-    }
-
-    fn public_key(&self) -> Option<Vec<u8>> {
-        match self {
-            ArcIdentity::Anonymous(id) => id.public_key(),
-            ArcIdentity::Ed25519(id) => id.public_key(),
-            ArcIdentity::Delegated(id) => id.public_key(),
-        }
-    }
-}
-
-impl From<AnonymousIdentity> for ArcIdentity {
-    fn from(identity: AnonymousIdentity) -> Self {
-        ArcIdentity::Anonymous(Arc::new(identity))
-    }
-}
-
-impl From<BasicIdentity> for ArcIdentity {
-    fn from(identity: BasicIdentity) -> Self {
-        ArcIdentity::Ed25519(Arc::new(identity))
-    }
-}
-
-impl From<DelegatedIdentity> for ArcIdentity {
-    fn from(identity: DelegatedIdentity) -> Self {
-        ArcIdentity::Delegated(Arc::new(identity))
-    }
-}
-
-/// Options for the [`AuthClient::login_with_options`].
-#[derive(Clone, Default, bon::Builder)]
-#[builder(on(String, into))]
-pub struct AuthClientLoginOptions {
-    /// The URL of the identity provider.
-    identity_provider: Option<String>,
-
-    /// Expiration of the authentication in nanoseconds.
-    max_time_to_live: Option<u64>,
-
-    /// If present, indicates whether or not the Identity Provider should allow the user to authenticate and/or register using a temporary key/PIN identity.
-    ///
-    /// Authenticating dapps may want to prevent users from using Temporary keys/PIN identities because Temporary keys/PIN identities are less secure than Passkeys (webauthn credentials) and because Temporary keys/PIN identities generally only live in a browser database (which may get cleared by the browser/OS).
-    allow_pin_authentication: Option<bool>,
-
-    /// Origin for Identity Provider to use while generating the delegated identity. For II, the derivation origin must authorize this origin by setting a record at `<derivation-origin>/.well-known/ii-alternative-origins`.
-    ///
-    /// See: <https://github.com/dfinity/internet-identity/blob/main/docs/ii-spec.mdx#alternative-frontend-origins>
-    derivation_origin: Option<String>,
-
-    /// Auth Window feature config string.
-    ///
-    /// # Example
-    /// ```ignore
-    /// toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100
-    /// ```
-    window_opener_features: Option<String>,
-
-    /// Callback once login has completed.
-    #[builder(into)]
-    on_success: Option<OnSuccess>,
-
-    /// Async callback once login has completed.
-    #[builder(into)]
-    on_success_async: Option<OnSuccessAsync>,
-
-    /// Callback in case authentication fails.
-    #[builder(into)]
-    on_error: Option<OnError>,
-
-    /// Async callback in case authentication fails.
-    #[builder(into)]
-    on_error_async: Option<OnErrorAsync>,
-
-    /// Extra values to be passed in the login request during the authorize-ready phase.
-    custom_values: Option<serde_json::Map<String, serde_json::Value>>,
-}
-
 /// Options for creating a new [`AuthClient`].
-#[derive(Default, Clone)]
+#[derive(Default, Clone, bon::Builder)]
 pub struct AuthClientCreateOptions {
     /// An optional identity to use as the base. If not provided, an `Ed25519` key pair will be used.
     pub identity: Option<ArcIdentity>,
@@ -1113,125 +895,6 @@ pub struct AuthClientCreateOptions {
     pub key_type: Option<BaseKeyType>,
     /// Options for handling idle timeouts. If not provided, default options will be used.
     pub idle_options: Option<IdleOptions>,
-}
-
-/// Options for handling idle timeouts.
-#[derive(Default, Clone, Debug)]
-pub struct IdleOptions {
-    /// If set to `true`, disables the idle timeout functionality.
-    pub disable_idle: Option<bool>,
-    /// If set to `true`, disables the default idle timeout callback.
-    pub disable_default_idle_callback: Option<bool>,
-    /// Options for the [`IdleManager`] that handles idle timeouts.
-    pub idle_manager_options: IdleManagerOptions,
-}
-
-impl IdleOptions {
-    /// Create a new [`IdleOptionsBuilder`].
-    pub fn builder() -> IdleOptionsBuilder {
-        IdleOptionsBuilder::new()
-    }
-}
-
-/// Builder for [`IdleOptions`].
-pub struct IdleOptionsBuilder {
-    disable_idle: Option<bool>,
-    disable_default_idle_callback: Option<bool>,
-    idle_manager_options: IdleManagerOptions,
-}
-
-impl IdleOptionsBuilder {
-    fn new() -> Self {
-        Self {
-            disable_idle: None,
-            disable_default_idle_callback: None,
-            idle_manager_options: IdleManagerOptions::default(),
-        }
-    }
-
-    /// If set to `true`, disables the idle timeout functionality.
-    pub fn disable_idle(mut self, disable_idle: bool) -> Self {
-        self.disable_idle = Some(disable_idle);
-        self
-    }
-
-    /// If set to `true`, disables the default idle timeout callback.
-    pub fn disable_default_idle_callback(mut self, disable_default_idle_callback: bool) -> Self {
-        self.disable_default_idle_callback = Some(disable_default_idle_callback);
-        self
-    }
-
-    /// Options for the [`IdleManager`] that handles idle timeouts.
-    pub fn idle_manager_options(mut self, idle_manager_options: IdleManagerOptions) -> Self {
-        self.idle_manager_options = idle_manager_options;
-        self
-    }
-
-    /// A callback function to be executed when the system becomes idle.
-    /// Note: This replaces any existing callbacks. Use `add_on_idle` for multiple.
-    pub fn on_idle(mut self, on_idle: fn()) -> Self {
-        self.idle_manager_options.on_idle = Arc::new(Mutex::new(vec![
-            Box::new(on_idle) as Box<dyn FnMut() + Send>
-        ]));
-        self
-    }
-
-    /// Adds a callback function to be executed when the system becomes idle.
-    pub fn add_on_idle<F>(self, on_idle: F) -> Self
-    where
-        F: FnMut() + Send + 'static,
-    {
-        self.idle_manager_options
-            .on_idle
-            .lock()
-            .push(Box::new(on_idle));
-        self
-    }
-
-    /// The duration of inactivity after which the system is considered idle in milliseconds.
-    pub fn idle_timeout(mut self, idle_timeout: u32) -> Self {
-        self.idle_manager_options.idle_timeout = Some(idle_timeout);
-        self
-    }
-
-    /// A delay for debouncing scroll events in milliseconds.
-    pub fn scroll_debounce(mut self, scroll_debounce: u32) -> Self {
-        self.idle_manager_options.scroll_debounce = Some(scroll_debounce);
-        self
-    }
-
-    /// A flag indicating whether to capture scroll events.
-    pub fn capture_scroll(mut self, capture_scroll: bool) -> Self {
-        self.idle_manager_options.capture_scroll = Some(capture_scroll);
-        self
-    }
-
-    /// Build the [`IdleOptions`].
-    pub fn build(self) -> IdleOptions {
-        IdleOptions {
-            disable_idle: self.disable_idle,
-            disable_default_idle_callback: self.disable_default_idle_callback,
-            idle_manager_options: self.idle_manager_options,
-        }
-    }
-}
-
-/// Enum representing the type of base key used for the identity.
-///
-/// Currently, only Ed25519 is supported.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub enum BaseKeyType {
-    /// Ed25519 base key type.
-    #[default]
-    Ed25519,
-}
-
-impl fmt::Display for BaseKeyType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BaseKeyType::Ed25519 => write!(f, "{}", ED25519_KEY_LABEL),
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -1290,16 +953,22 @@ mod tests {
     #[wasm_bindgen_test]
     async fn test_auth_client_builder() {
         let mut rng = rand::thread_rng();
-        let private_key = SigningKey::generate(&mut rng).to_bytes();
-        let identity = ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&private_key)));
+        let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
+        let identity = ArcIdentity::Ed25519(Arc::new(
+            ic_agent::identity::BasicIdentity::from_raw_key(&private_key),
+        ));
 
         let idle_options = IdleOptions::builder()
             .disable_idle(true)
             .disable_default_idle_callback(true)
-            .on_idle(|| {})
-            .idle_timeout(1000)
-            .scroll_debounce(500)
-            .capture_scroll(true)
+            .idle_manager_options(
+                IdleManagerOptions::builder()
+                    .on_idle(|| {})
+                    .idle_timeout(1000)
+                    .scroll_debounce(500)
+                    .capture_scroll(true)
+                    .build(),
+            )
             .build();
 
         let auth_client = AuthClient::builder()
