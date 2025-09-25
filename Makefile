@@ -2,13 +2,16 @@ build-wasm:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build --release --target web
 
 test-chrome:
-	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --chrome --headless
+	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --chrome
 
 test-firefox:
-	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --firefox --headless
+	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --firefox
 
 test-safari:
-	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --safari --headless
+	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --safari
+
+doc:
+	RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --all-features --no-deps --open
 
 clean:
 	rm -rf target
