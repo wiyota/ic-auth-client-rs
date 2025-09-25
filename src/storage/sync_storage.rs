@@ -1,3 +1,7 @@
+//! Storage implementations for authentication client data.
+//!
+//! This module provides keyring-based storage for secure credential management.
+
 use super::StoredKey;
 use keyring::Entry;
 
@@ -10,6 +14,7 @@ pub struct KeyringStorage {
 }
 
 impl KeyringStorage {
+    /// Creates a new instance of [`KeyringStorage`].
     pub fn new(service_name: String) -> Self {
         Self { service_name }
     }
@@ -92,9 +97,10 @@ impl AuthClientStorage for KeyringStorage {
     }
 }
 
-/// Enum for selecting the type of storage to use for [`AuthClient`](super::AuthClient).
+/// Enum for selecting the type of storage to use for [`AuthClient`](crate::AuthClient).
 #[derive(Debug, Clone)]
 pub enum AuthClientStorageType {
+    /// Use the system keyring for storage.
     Keyring(KeyringStorage),
 }
 
@@ -120,9 +126,34 @@ impl AuthClientStorage for AuthClientStorageType {
 
 /// Trait for persisting user authentication data.
 pub trait AuthClientStorage {
+    /// Retrieves a stored value by key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to look up in storage
+    ///
+    /// # Returns
+    /// * `Some(StoredKey)` if the key exists in storage
+    /// * `None` if the key doesn't exist or an error occurred
     fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey>;
 
+    /// Stores a key-value pair in the storage.
+    ///
+    /// # Arguments
+    /// * `key` - The key to store the value under
+    /// * `value` - The value to store
+    ///
+    /// # Returns
+    /// * `Ok(())` if the value was successfully stored
+    /// * `Err(())` if an error occurred during storage
     fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()>;
 
+    /// Removes a stored value by key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to remove from storage
+    ///
+    /// # Returns
+    /// * `Ok(())` if the key was successfully removed
+    /// * `Err(())` if an error occurred during removal
     fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()>;
 }

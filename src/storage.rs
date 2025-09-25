@@ -1,9 +1,13 @@
+//! Storage module for managing key storage.
+//!
+//! This module provides utilities for storing and retrieving keys securely.
+//! It includes support for both asynchronous and synchronous storage backends.
+
 use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine as _};
 
-#[cfg(target_family = "wasm")]
 #[cfg(feature = "wasm-js")]
 pub mod async_storage;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "native")]
 pub mod sync_storage;
 
 /// A key for storing the identity key pair.
@@ -15,11 +19,21 @@ pub(crate) const KEY_VECTOR: &str = "iv";
 /// Enum for storing different types of keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredKey {
+    /// A base64-encoded string representation of a 32-byte key.
     String(String),
+    /// Raw 32-byte key data.
     Raw([u8; 32]),
 }
 
 impl StoredKey {
+    /// Decodes the stored key into a 32-byte array.
+    ///
+    /// For `String` variants, decodes from base64. For `Raw` variants, returns the bytes directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecodeError::Base64` if base64 decoding fails.
+    /// Returns `DecodeError::Ed25519` if the decoded data is not exactly 32 bytes.
     pub fn decode(&self) -> Result<[u8; 32], DecodeError> {
         match self {
             StoredKey::String(s) => {
@@ -35,8 +49,14 @@ impl StoredKey {
         }
     }
 
-    pub fn encode(key: &[u8; 32]) -> String {
-        BASE64_STANDARD_NO_PAD.encode(key)
+    /// Encodes the stored key as a string.
+    ///
+    /// For `String` variants, returns the string directly. For `Raw` variants, encodes as base64.
+    pub fn encode(&self) -> String {
+        match self {
+            StoredKey::String(s) => s.clone(),
+            StoredKey::Raw(bytes) => BASE64_STANDARD_NO_PAD.encode(bytes),
+        }
     }
 }
 
@@ -63,10 +83,22 @@ impl From<String> for StoredKey {
     }
 }
 
+/// Error type for key decoding operations.
+///
+/// This enum represents the various errors that can occur when decoding
+/// stored keys, including Ed25519-specific errors and base64 decoding errors.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DecodeError {
+    /// An error related to Ed25519 key operations.
+    ///
+    /// This variant is used for Ed25519-specific errors, such as invalid
+    /// key lengths or malformed key data.
     #[error("Ed25519 error: {0}")]
     Ed25519(String),
+    /// An error that occurred during base64 decoding.
+    ///
+    /// This variant wraps base64 decoding errors that can occur when
+    /// converting string-encoded keys back to binary format.
     #[error("Base64 error: {0}")]
     Base64(base64::DecodeError),
 }
@@ -82,7 +114,7 @@ mod tests {
         let signing_key = SigningKey::generate(&mut rng);
         let raw_key = signing_key.to_bytes();
 
-        let encoded = StoredKey::encode(&raw_key);
+        let encoded = StoredKey::Raw(raw_key).encode();
         let key = StoredKey::String(encoded);
         let decoded = key.decode().unwrap();
         assert_eq!(raw_key, decoded);

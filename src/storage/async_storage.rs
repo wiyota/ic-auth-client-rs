@@ -1,3 +1,7 @@
+//! Storage implementations for authentication client data.
+//!
+//! This module provides browser-based storage for secure credential management.
+
 use super::{DecodeError, StoredKey};
 use web_sys::{Storage, wasm_bindgen::JsValue};
 
@@ -14,6 +18,7 @@ impl From<DecodeError> for JsValue {
 pub struct LocalStorage;
 
 impl LocalStorage {
+    /// Creates a new instance of [`LocalStorage`].
     pub fn new() -> Self {
         Self
     }
@@ -51,10 +56,7 @@ impl AuthClientStorage for LocalStorage {
             None => return Err(()),
         };
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        let value = match value {
-            StoredKey::String(value) => value,
-            StoredKey::Raw(value) => StoredKey::encode(&value),
-        };
+        let value = value.encode();
         match local_storage.set_item(&key, value.as_ref()) {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -82,9 +84,10 @@ impl AuthClientStorage for LocalStorage {
     }
 }
 
-/// Enum for selecting the type of storage to use for [`AuthClient`](super::AuthClient).
+/// Enum for selecting the type of storage to use for [`AuthClient`](crate::AuthClient).
 #[derive(Debug, Clone)]
 pub enum AuthClientStorageType {
+    /// Local storage implementation.
     LocalStorage(LocalStorage),
 }
 
@@ -116,14 +119,39 @@ impl AuthClientStorage for AuthClientStorageType {
 
 /// Trait for persisting user authentication data.
 pub trait AuthClientStorage {
+    /// Retrieves a stored value by key from the storage backend.
+    ///
+    /// # Parameters
+    /// - `key`: The key to retrieve the value for. The key will be prefixed with the storage prefix.
+    ///
+    /// # Returns
+    /// Returns `Some(StoredKey)` if the key exists in storage, or `None` if the key doesn't exist
+    /// or if there was an error accessing the storage.
     fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;
 
+    /// Stores a value with the given key in the storage backend.
+    ///
+    /// # Parameters
+    /// - `key`: The key to store the value under. The key will be prefixed with the storage prefix.
+    /// - `value`: The value to store, which will be encoded before storage.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the value was successfully stored, or `Err(())` if there was an error
+    /// accessing the storage or storing the value.
     fn set<T: AsRef<str>>(
         &mut self,
         key: T,
         value: StoredKey,
     ) -> impl Future<Output = Result<(), ()>>;
 
+    /// Removes a stored value by key from the storage backend.
+    ///
+    /// # Parameters
+    /// - `key`: The key to remove from storage. The key will be prefixed with the storage prefix.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` if the key was successfully removed or didn't exist, or `Err(())` if there
+    /// was an error accessing the storage.
     fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Result<(), ()>>;
 }
 
