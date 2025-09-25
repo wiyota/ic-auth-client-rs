@@ -23,6 +23,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 base64 = "0.22"
 bon = "3"
+document-features = "0.2"
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 futures = "0.3"
 ic-agent = { version = "0.44", default-features = false }
@@ -33,15 +34,15 @@ serde_json = "1.0"
 thiserror = "2"
 tracing = { version = "0.1", optional = true }
 
-[target."cfg(target_family = \"wasm\")".dependencies]
+# for wasm-js
 getrandom = { version = "0.3", optional = true }
 gloo-events = { version = "0.2", optional = true }
 gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 gloo-utils = { version = "0.2", optional = true }
-serde-wasm-bindgen = "0.6"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-wasm-timer = "0.2"
+serde-wasm-bindgen = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+wasm-timer = { version = "0.2", optional = true }
 web-sys = { version = "0.3", optional = true, default-features = false, features = [
     "MessageEvent",
     "Storage",
@@ -49,24 +50,25 @@ web-sys = { version = "0.3", optional = true, default-features = false, features
     "Window",
 ] }
 
-[target."cfg(not(target_family = \"wasm\"))".dependencies]
-anyhow = "1.0"
-candid = "0.10"
-chrono = "0.4"
-hex = "0.4"
-keyring = { version = "3", features = [
+# for native
+chrono = { version = "0.4", optional = true }
+hex = { version = "0.4", optional = true }
+keyring = { version = "3", optional = true, features = [
     "apple-native",
     "windows-native",
     "sync-secret-service",
 ] }
-percent-encoding = "2.3"
-portpicker = "0.1"
-rdev = "0.5"
-serde_json = "1.0"
-tiny_http = "0.12"
-tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
-url = "2"
-webbrowser = "1.0"
+percent-encoding = { version = "2.3", optional = true }
+portpicker = { version = "0.1", optional = true }
+rdev = { version = "0.5", optional = true }
+tiny_http = { version = "0.12", optional = true }
+tokio = { version = "1.47", optional = true, features = [
+    "macros",
+    "rt-multi-thread",
+    "time",
+] }
+url = { version = "2", optional = true }
+webbrowser = { version = "1.0", optional = true }
 
 [dev-dependencies]
 serde_test = "1.0"
@@ -74,12 +76,37 @@ wasm-bindgen-test = "0.3"
 
 [features]
 default = ["wasm-js"]
-miniserde = []
+
+#! # Features
+
+# miniserde = []
+
+## for native
+native = [
+    "dep:chrono",
+    "dep:hex",
+    "dep:keyring",
+    "dep:percent-encoding",
+    "dep:portpicker",
+    "dep:rdev",
+    "dep:tiny_http",
+    "dep:tokio",
+    "dep:url",
+    "dep:webbrowser",
+]
+
+## Enable tracing
 tracing = ["dep:tracing"]
+
+## for wasm-js
 wasm-js = [
     "dep:gloo-events",
     "dep:gloo-timers",
     "dep:gloo-utils",
+    "dep:serde-wasm-bindgen",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:wasm-timer",
     "dep:web-sys",
     "getrandom/wasm_js",
     "ic-agent/wasm-bindgen",
@@ -96,6 +123,10 @@ panic = "abort"
 wasm-opt = ["-O", "--enable-bulk-memory"]
 
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
-rustdoc-args = ["--cfg=docsrs"]
-features = []
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(coverage,coverage_nightly)',
+] }
