@@ -1,3 +1,9 @@
+//! Internet Identity authentication types and utilities.
+//!
+//! This module provides types and structures for handling authentication
+//! requests and responses with the Internet Identity Service on the Internet Computer.
+//! It includes request structures, response parsing, and authentication flow management.
+
 use ic_agent::identity::SignedDelegation;
 use serde::{Deserialize, Serialize};
 
