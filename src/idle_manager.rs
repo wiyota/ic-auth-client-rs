@@ -1,10 +1,56 @@
+//! Cross-platform idle detection library for Rust applications.
+//!
+//! This library provides functionality to detect when a system becomes idle (no user interaction)
+//! and execute callbacks accordingly. It supports both native platforms and WebAssembly targets.
+//!
+//! ## Features
+//!
+//! - Cross-platform idle detection (native and WASM)
+//! - Configurable idle timeout duration
+//! - Multiple callback registration support
+//! - Automatic event listening for user interactions
+//! - Scroll event debouncing (for web targets)
+//!
+//! ## Usage
+//!
+//! ```ignore
+//! use ic_auth_client::idle_manager::{IdleManager, IdleManagerOptions};
+//!
+//! // Create an idle manager with default settings
+//! let mut idle_manager = IdleManager::new(None);
+//!
+//! // Register a callback to execute when idle
+//! idle_manager.register_callback(|| {
+//!     println!("System is now idle!");
+//! });
+//!
+//! // Or create with custom options
+//! let options = IdleManagerOptions::builder()
+//!     .idle_timeout(5 * 60 * 1000) // 5 minutes
+//!     .capture_scroll(true)
+//!     .on_idle(|| println!("Custom idle callback"))
+//!     .build();
+//!
+//! let mut idle_manager = IdleManager::new(Some(options));
+//!
+//! // Reset the idle timer manually
+//! idle_manager.reset_timer();
+//!
+//! // Clean up when done
+//! idle_manager.exit();
+//! ```
+//!
+//! ## Platform Support
+//!
+//! - **Native**: Uses system-level event detection
+//! - **WebAssembly**: Uses browser event listeners for DOM interactions
+
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "native")]
 mod native;
-#[cfg(target_family = "wasm")]
-#[cfg(feature = "wasm-js")]
+#[cfg(not(feature = "native"))]
 mod wasm_js;
 
 /// A callback function to be executed when the system becomes idle.
@@ -22,19 +68,16 @@ pub(crate) struct Context {
 pub struct IdleManager {
     context: Arc<Mutex<Context>>,
     idle_timeout: u32,
-    #[cfg(target_family = "wasm")]
-    #[cfg(feature = "wasm-js")]
+    #[cfg(not(feature = "native"))]
     js_sender: Arc<Mutex<futures::channel::mpsc::Sender<wasm_js::JsMessage>>>,
-    #[cfg(target_family = "wasm")]
-    #[cfg(feature = "wasm-js")]
     is_initialized: Arc<Mutex<bool>>,
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "native")]
     running: Arc<std::sync::atomic::AtomicBool>,
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "native")]
     event_sender: Arc<Mutex<futures::channel::mpsc::Sender<()>>>,
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "native")]
     _timeout_receiver: Arc<tokio::sync::watch::Receiver<()>>, // To keep the channel open
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "native")]
     timeout_sender: Arc<tokio::sync::watch::Sender<()>>,
 }
 
@@ -42,9 +85,47 @@ impl IdleManager {
     /// Default idle timeout duration in milliseconds (10 minutes).
     pub const DEFAULT_IDLE_TIMEOUT: u32 = 10 * 60 * 1000;
     /// Default scroll debounce duration in milliseconds.
-    #[cfg(target_family = "wasm")]
     #[cfg(feature = "wasm-js")]
     pub const DEFAULT_SCROLL_DEBOUNCE: u32 = 100;
+
+    /// Constructs a new [`IdleManager`] with the given options.
+    pub fn new(options: Option<IdleManagerOptions>) -> Self {
+        #[cfg(feature = "native")]
+        {
+            Self::new_native(options)
+        }
+
+        #[cfg(not(feature = "native"))]
+        {
+            Self::new_wasm_js(options)
+        }
+    }
+
+    /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
+    pub fn exit(&mut self) {
+        #[cfg(feature = "native")]
+        {
+            self.exit_native();
+        }
+
+        #[cfg(not(feature = "native"))]
+        {
+            self.exit_wasm_js();
+        }
+    }
+
+    /// Resets the idle timer, cancelling any existing timeout and setting a new one.
+    pub fn reset_timer(&self) {
+        #[cfg(feature = "native")]
+        {
+            self.reset_timer_native();
+        }
+
+        #[cfg(not(feature = "native"))]
+        {
+            self.reset_timer_wasm_js();
+        }
+    }
 
     /// Registers a callback to be executed when the system becomes idle.
     pub fn register_callback<F>(&self, callback: F)

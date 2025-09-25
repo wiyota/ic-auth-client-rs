@@ -97,7 +97,7 @@ impl Drop for IdleManager {
 
 impl IdleManager {
     /// Constructs a new [`IdleManager`] with the given options.
-    pub fn new(options: Option<IdleManagerOptions>) -> Self {
+    pub(super) fn new_native(options: Option<IdleManagerOptions>) -> Self {
         let callbacks = options
             .as_ref()
             .map(|options| options.on_idle.clone())
@@ -145,6 +145,7 @@ impl IdleManager {
         Self {
             context: Arc::new(Mutex::new(Context { callbacks })),
             idle_timeout,
+            is_initialized: Arc::new(Mutex::new(true)),
             running,
             event_sender: Arc::new(Mutex::new(event_sender)),
             _timeout_receiver: Arc::new(timeout_receiver),
@@ -153,7 +154,7 @@ impl IdleManager {
     }
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
-    pub fn exit(&mut self) {
+    pub(super) fn exit_native(&mut self) {
         if self.running.swap(false, Ordering::SeqCst) {
             for callback in self.context.lock().callbacks.lock().iter_mut() {
                 (callback)();
@@ -162,7 +163,7 @@ impl IdleManager {
     }
 
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
-    pub fn reset_timer(&self) {
+    pub(super) fn reset_timer_native(&self) {
         let _ = self.event_sender.lock().try_send(());
     }
 }

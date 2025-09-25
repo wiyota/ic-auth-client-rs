@@ -261,7 +261,7 @@ impl Drop for IdleManager {
 
 impl IdleManager {
     /// Constructs a new [`IdleManager`] with the given options.
-    pub fn new(options: Option<IdleManagerOptions>) -> Self {
+    pub(super) fn new_wasm_js(options: Option<IdleManagerOptions>) -> Self {
         let callbacks = options
             .as_ref()
             .map(|options| options.on_idle.clone())
@@ -298,7 +298,7 @@ impl IdleManager {
         };
 
         instance.initialize_event_listeners(&options);
-        instance.reset_timer();
+        instance.reset_timer_wasm_js();
         instance
     }
 
@@ -348,7 +348,7 @@ impl IdleManager {
     }
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
-    pub fn exit(&mut self) {
+    pub(super) fn exit_wasm_js(&mut self) {
         use futures::SinkExt;
         // Send cleanup message to JS handler
         let mut sender_clone = self.js_sender.lock().clone();
@@ -359,7 +359,7 @@ impl IdleManager {
         // The callbacks will be executed by JsHandler::handle_cleanup
     }
     /// Resets the idle timer, cancelling any existing timeout and setting a new one.
-    pub fn reset_timer(&self) {
+    pub(super) fn reset_timer_wasm_js(&self) {
         use futures::SinkExt;
         let mut sender_clone = self.js_sender.lock().clone();
         let timeout = self.idle_timeout;
