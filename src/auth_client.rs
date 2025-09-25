@@ -1,144 +1,27 @@
-use crate::{api::AuthResponseSuccess, idle_manager::IdleManagerOptions};
-use futures::future::BoxFuture;
 use ic_agent::identity::{AnonymousIdentity, BasicIdentity, DelegatedIdentity, Identity};
-use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(feature = "native")]
 mod native;
-#[cfg(target_family = "wasm")]
 #[cfg(feature = "wasm-js")]
 mod wasm_js;
 
-#[cfg(not(target_family = "wasm"))]
-pub use native::*;
-#[cfg(target_family = "wasm")]
+#[cfg(feature = "native")]
+pub use native::NativeAuthClient;
 #[cfg(feature = "wasm-js")]
-pub use wasm_js::*;
+pub use wasm_js::AuthClient;
 
-const ED25519_KEY_LABEL: &str = "Ed25519";
-
-// Callbacks
-
-#[derive(Clone)]
-struct OnSuccess(Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) + Send>>>);
-
-impl<F> From<F> for OnSuccess
-where
-    F: FnMut(AuthResponseSuccess) + Send + 'static,
-{
-    fn from(f: F) -> Self {
-        OnSuccess(Arc::new(Mutex::new(Box::new(f))))
-    }
-}
-
-#[derive(Clone)]
-struct OnSuccessAsync(
-    Arc<Mutex<Box<dyn FnMut(AuthResponseSuccess) -> BoxFuture<'static, ()> + Send>>>,
-);
-
-impl<F, Fut> From<F> for OnSuccessAsync
-where
-    F: FnMut(AuthResponseSuccess) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    fn from(mut f: F) -> Self {
-        use futures::future::FutureExt;
-        OnSuccessAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
-    }
-}
-
-#[derive(Clone)]
-struct OnError(Arc<Mutex<Box<dyn FnMut(Option<String>) + Send>>>);
-
-impl<F> From<F> for OnError
-where
-    F: FnMut(Option<String>) + Send + 'static,
-{
-    fn from(f: F) -> Self {
-        OnError(Arc::new(Mutex::new(Box::new(f))))
-    }
-}
-
-#[derive(Clone)]
-struct OnErrorAsync(Arc<Mutex<Box<dyn FnMut(Option<String>) -> BoxFuture<'static, ()> + Send>>>);
-
-impl<F, Fut> From<F> for OnErrorAsync
-where
-    F: FnMut(Option<String>) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    fn from(mut f: F) -> Self {
-        use futures::future::FutureExt;
-        OnErrorAsync(Arc::new(Mutex::new(Box::new(move |arg| f(arg).boxed()))))
-    }
-}
-
-// Key-related structs and enums
-
-#[derive(Clone, Debug)]
-pub struct KeyWithRaw {
-    key: [u8; 32],
-    identity: ArcIdentity,
-}
-
-impl KeyWithRaw {
-    pub fn new(raw_key: [u8; 32]) -> Self {
-        KeyWithRaw {
-            key: raw_key,
-            identity: ArcIdentity::Ed25519(Arc::new(BasicIdentity::from_raw_key(&raw_key))),
-        }
-    }
-
-    pub fn raw_key(&self) -> &[u8; 32] {
-        &self.key
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Key {
-    WithRaw(KeyWithRaw),
-    Identity(ArcIdentity),
-}
-
-impl Key {
-    pub fn as_arc_identity(&self) -> Arc<dyn Identity> {
-        match self {
-            Key::WithRaw(key) => key.identity.as_arc_identity(),
-            Key::Identity(identity) => identity.as_arc_identity(),
-        }
-    }
-
-    pub fn public_key(&self) -> Option<Vec<u8>> {
-        match self {
-            Key::WithRaw(key) => key.identity.public_key(),
-            Key::Identity(identity) => identity.public_key(),
-        }
-    }
-}
-
-// Identity-related structs and enums
-
-impl From<Key> for ArcIdentity {
-    fn from(key: Key) -> Self {
-        match key {
-            Key::WithRaw(key) => key.identity,
-            Key::Identity(identity) => identity,
-        }
-    }
-}
-
-impl From<ArcIdentity> for Key {
-    fn from(identity: ArcIdentity) -> Self {
-        Key::Identity(identity)
-    }
-}
-
+/// Arc-wrapped identity that can be one of several identity types.
+///
+/// This enum provides a way to work with different identity types in a uniform manner
+/// while maintaining reference counting through [`Arc`](std::sync::Arc) for efficient cloning and sharing.
 #[derive(Clone)]
 pub enum ArcIdentity {
+    /// An anonymous identity that provides no authentication.
     Anonymous(Arc<AnonymousIdentity>),
+    /// An Ed25519-based identity using a basic cryptographic key pair.
     Ed25519(Arc<BasicIdentity>),
+    /// A delegated identity that uses delegation chains for authentication.
     Delegated(Arc<DelegatedIdentity>),
 }
 
@@ -159,7 +42,10 @@ impl fmt::Debug for ArcIdentity {
 }
 
 impl ArcIdentity {
-    fn as_arc_identity(&self) -> Arc<dyn Identity> {
+    /// Returns the underlying identity as an [`Arc<dyn Identity>`](https://docs.rs/ic-agent/latest/ic_agent/identity/trait.Identity.html#impl-Identity-for-Arc%3Cdyn+Identity%3E).
+    ///
+    /// [`Arc<dyn Identity>`](https://docs.rs/ic-agent/latest/ic_agent/identity/trait.Identity.html#impl-Identity-for-Arc%3Cdyn+Identity%3E) implements the [`Identity`](ic_agent::identity::Identity) trait, making it directly usable for tasks like login.
+    pub fn as_arc_identity(&self) -> Arc<dyn Identity> {
         match self {
             ArcIdentity::Anonymous(id) => id.clone(),
             ArcIdentity::Ed25519(id) => id.clone(),
@@ -167,7 +53,11 @@ impl ArcIdentity {
         }
     }
 
-    fn public_key(&self) -> Option<Vec<u8>> {
+    /// Returns the public key associated with this identity, if available.
+    ///
+    /// This method delegates to the underlying identity's [`public_key()`](ic_agent::identity::Identity::public_key) method.
+    /// The availability and format of the public key depends on the specific identity type.
+    pub fn public_key(&self) -> Option<Vec<u8>> {
         match self {
             ArcIdentity::Anonymous(id) => id.public_key(),
             ArcIdentity::Ed25519(id) => id.public_key(),
