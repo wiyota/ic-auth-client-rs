@@ -1,13 +1,21 @@
+//! Delegation chain utilities for managing signed delegations in the Internet Computer.
+//!
+//! This module provides the [`DelegationChain`] struct which represents a chain of cryptographic
+//! delegations that can be serialized to JSON and used with delegation-based identities.
+//! The chain includes validation functionality to check expiration times and scope restrictions.
+
 use ic_agent::{export::Principal, identity::SignedDelegation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// A chain of delegations. This is JSON Serializable.
+/// A chain of delegations.
 ///
 /// This is the struct to serialize and pass to a DelegationIdentity. It does not keep any private keys.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DelegationChain {
+    /// The delegations in the chain.
     pub delegations: Vec<SignedDelegation>,
+    /// The public key associated with the chain.
     pub public_key: Vec<u8>,
 }
 
@@ -63,15 +71,16 @@ impl DelegationChain {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn now() -> u64 {
-    chrono::Utc::now().timestamp_millis() as u64
-}
+    #[cfg(feature = "native")]
+    {
+        chrono::Utc::now().timestamp_millis() as u64
+    }
 
-#[cfg(target_family = "wasm")]
-#[cfg(feature = "wasm-js")]
-fn now() -> u64 {
-    web_sys::js_sys::Date::now() as u64
+    #[cfg(not(feature = "native"))]
+    {
+        web_sys::js_sys::Date::now() as u64
+    }
 }
 
 #[allow(dead_code)]
