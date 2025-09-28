@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- Added: `parking_lot`, `futures`, native-specific dependencies (`keyring`, `chrono`, `tokio`, `url`)
+- Added: `parking_lot`, `futures`, native-specific dependencies (`keyring`, `chrono`, `url`)
 - Updated: `gloo-timers` with `futures` feature
 - Made optional: WASM-specific dependencies behind feature flags
 

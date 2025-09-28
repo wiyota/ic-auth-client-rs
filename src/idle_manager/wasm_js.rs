@@ -68,6 +68,7 @@ impl Drop for JsContext {
 
 pub enum JsMessage {
     ResetTimer(u32),
+    OnIdle,
     Cleanup,
     CleanupWithCallbacks,
     ScrollDebounce(u32),
@@ -91,8 +92,9 @@ impl JsHandler {
         sender: mpsc::Sender<JsMessage>,
         callbacks: Arc<Mutex<Vec<super::Callback>>>,
         idle_timeout: u32,
+        options: &Option<IdleManagerOptions>,
     ) -> Self {
-        Self {
+        let mut s = Self {
             context: JsContext::new(),
             receiver,
             sender,
@@ -102,6 +104,43 @@ impl JsHandler {
             reset_closure: None,
             callbacks,
             idle_timeout,
+        };
+        s.initialize_event_listeners(options);
+        s
+    }
+
+    fn initialize_event_listeners(&mut self, options: &Option<IdleManagerOptions>) {
+        for event_type in EVENTS.iter() {
+            let sender = self.get_handler_sender();
+            let callback = Closure::wrap(Box::new(move |_: Event| {
+                use futures::SinkExt;
+                let mut sender_clone = sender.clone();
+                spawn_local(async move {
+                    let _ = sender_clone.send(JsMessage::ResetTimer(0)).await;
+                });
+            }) as Box<dyn FnMut(Event)>);
+
+            self.context.add_event_listener(event_type, callback);
+        }
+
+        if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
+            let sender = self.get_handler_sender();
+            let scroll_debounce = options
+                .as_ref()
+                .and_then(|options| options.scroll_debounce)
+                .unwrap_or(IdleManager::DEFAULT_SCROLL_DEBOUNCE);
+
+            let callback = Closure::wrap(Box::new(move |_: Event| {
+                use futures::SinkExt;
+                let mut sender_clone = sender.clone();
+                spawn_local(async move {
+                    let _ = sender_clone
+                        .send(JsMessage::ScrollDebounce(scroll_debounce))
+                        .await;
+                });
+            }) as Box<dyn FnMut(Event)>);
+
+            self.context.add_event_listener("scroll", callback);
         }
     }
 
@@ -114,10 +153,22 @@ impl JsHandler {
         while let Some(msg) = self.receiver.next().await {
             match msg {
                 JsMessage::ResetTimer(timeout) => self.handle_reset_timer(timeout),
+                JsMessage::OnIdle => self.handle_on_idle(),
                 JsMessage::Cleanup => self.handle_cleanup(false),
                 JsMessage::CleanupWithCallbacks => self.handle_cleanup(true),
                 JsMessage::ScrollDebounce(delay) => self.handle_scroll_debounce(delay),
             }
+        }
+    }
+
+    fn handle_on_idle(&mut self) {
+        // The timer has fired, so we can clear our reference to it.
+        self.current_timer = None;
+        self.exit_closure = None;
+
+        // Execute callbacks
+        for callback in self.callbacks.lock().iter_mut() {
+            (callback)();
         }
     }
 
@@ -161,9 +212,9 @@ impl JsHandler {
                 spawn_local(async move {
                     // Wait for the oneshot message
                     if oneshot_receiver.await.is_ok() {
-                        // Then send the cleanup message to the handler
+                        // Then send the on-idle message to the handler
                         use futures::SinkExt;
-                        let _ = sender.send(JsMessage::CleanupWithCallbacks).await;
+                        let _ = sender.send(JsMessage::OnIdle).await;
                     }
                 });
             }
@@ -280,12 +331,14 @@ impl IdleManager {
         let handler_sender = sender;
         let callbacks_for_handler = callbacks.clone();
         let idle_timeout_for_handler = idle_timeout;
+        let options_for_handler = options.clone();
         spawn_local(async move {
             let mut handler = JsHandler::new(
                 handler_receiver,
                 handler_sender,
                 callbacks_for_handler,
                 idle_timeout_for_handler,
+                &options_for_handler,
             );
             handler.run().await;
         });
@@ -294,57 +347,10 @@ impl IdleManager {
             context: Arc::new(Mutex::new(Context { callbacks })),
             idle_timeout,
             js_sender,
-            is_initialized: Arc::new(Mutex::new(false)),
         };
 
-        instance.initialize_event_listeners(&options);
         instance.reset_timer_wasm_js();
         instance
-    }
-
-    fn initialize_event_listeners(&self, options: &Option<IdleManagerOptions>) {
-        let mut is_initialized = self.is_initialized.lock();
-        if *is_initialized {
-            return;
-        }
-
-        let mut js_context = JsContext::new();
-
-        for event_type in EVENTS.iter() {
-            let sender = self.js_sender.lock().clone();
-            let callback = Closure::wrap(Box::new(move |_: Event| {
-                use futures::SinkExt;
-                let mut sender_clone = sender.clone();
-                spawn_local(async move {
-                    let _ = sender_clone.send(JsMessage::ResetTimer(0)).await;
-                });
-            }) as Box<dyn FnMut(Event)>);
-
-            js_context.add_event_listener(event_type, callback);
-        }
-
-        if let Some(true) = options.as_ref().and_then(|options| options.capture_scroll) {
-            let sender = self.js_sender.lock().clone();
-            let scroll_debounce = options
-                .as_ref()
-                .and_then(|options| options.scroll_debounce)
-                .unwrap_or(Self::DEFAULT_SCROLL_DEBOUNCE);
-
-            let callback = Closure::wrap(Box::new(move |_: Event| {
-                use futures::SinkExt;
-                let mut sender_clone = sender.clone();
-                spawn_local(async move {
-                    let _ = sender_clone
-                        .send(JsMessage::ScrollDebounce(scroll_debounce))
-                        .await;
-                });
-            }) as Box<dyn FnMut(Event)>);
-
-            js_context.add_event_listener("scroll", callback);
-        }
-
-        *is_initialized = true;
-        Box::leak(Box::new(js_context));
     }
 
     /// Exits the idle state, cancels any timeouts, removes event listeners, and executes all registered callbacks.
@@ -454,7 +460,7 @@ mod tests {
         event.init_event("scroll");
 
         for _ in 0..7 {
-            sleep(Duration::from_millis(200)).await;
+            sleep(Duration::from_millis(250)).await;
             window.dispatch_event(&event).unwrap();
         }
 
@@ -484,11 +490,11 @@ mod tests {
 
         assert!(!*callback.lock());
 
-        sleep(Duration::from_millis(1200)).await;
+        sleep(Duration::from_millis(800)).await;
 
         assert!(!*callback.lock());
 
-        sleep(Duration::from_millis(700)).await;
+        sleep(Duration::from_millis(2000)).await;
 
         assert!(*callback.lock());
     }

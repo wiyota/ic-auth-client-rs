@@ -70,15 +70,12 @@ pub struct IdleManager {
     idle_timeout: u32,
     #[cfg(not(feature = "native"))]
     js_sender: Arc<Mutex<futures::channel::mpsc::Sender<wasm_js::JsMessage>>>,
-    is_initialized: Arc<Mutex<bool>>,
     #[cfg(feature = "native")]
     running: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(feature = "native")]
     event_sender: Arc<Mutex<futures::channel::mpsc::Sender<()>>>,
     #[cfg(feature = "native")]
-    _timeout_receiver: Arc<tokio::sync::watch::Receiver<()>>, // To keep the channel open
-    #[cfg(feature = "native")]
-    timeout_sender: Arc<tokio::sync::watch::Sender<()>>,
+    _drop_sender: Arc<Mutex<futures::channel::oneshot::Sender<()>>>,
 }
 
 impl IdleManager {

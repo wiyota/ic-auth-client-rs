@@ -1,5 +1,12 @@
 use super::{Context, IdleManager, IdleManagerOptions};
-use futures::channel::mpsc;
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+    executor::block_on,
+    future::FutureExt,
+    pin_mut, select,
+};
+use futures_timer::Delay;
 use parking_lot::Mutex;
 use rdev::{Event, listen};
 use std::{
@@ -10,7 +17,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::sync::watch;
 
 struct NativeHandler {
     receiver: mpsc::Receiver<()>,
@@ -18,7 +24,7 @@ struct NativeHandler {
     idle_timeout: Duration,
     last_activity: Arc<Mutex<Instant>>,
     running: Arc<AtomicBool>,
-    timeout_sender: watch::Sender<()>,
+    drop_receiver: oneshot::Receiver<()>,
 }
 
 impl NativeHandler {
@@ -28,7 +34,7 @@ impl NativeHandler {
         idle_timeout: u32,
         last_activity: Arc<Mutex<Instant>>,
         running: Arc<AtomicBool>,
-        timeout_sender: watch::Sender<()>,
+        drop_receiver: oneshot::Receiver<()>,
     ) -> Self {
         Self {
             receiver,
@@ -36,36 +42,37 @@ impl NativeHandler {
             idle_timeout: Duration::from_millis(idle_timeout as u64),
             last_activity,
             running,
-            timeout_sender,
+            drop_receiver,
         }
     }
 
     async fn run(&mut self) {
-        use futures::StreamExt;
-
         loop {
-            let timeout_duration = self.idle_timeout;
-            let sleep = tokio::time::sleep(timeout_duration);
-            tokio::pin!(sleep);
+            let sleep_fut = Delay::new(self.idle_timeout).fuse();
+            let recv_fut = self.receiver.next().fuse();
+            let drop_fut = (&mut self.drop_receiver).fuse();
 
-            tokio::select! {
-                _ = &mut sleep => {
+            pin_mut!(sleep_fut, recv_fut, drop_fut);
+
+            select! {
+                _ = sleep_fut => {
                     if self.last_activity.lock().elapsed() >= self.idle_timeout {
                         self.handle_timeout();
                         break;
                     } else {
-                        // Spurious wakeup, recalculate sleep time
+                        // Spurious wakeup, loop again to recalculate sleep time
                         continue;
                     }
-                }
-                Some(_) = self.receiver.next() => {
-                    // Event received, loop will restart timer
-                    *self.last_activity.lock() = Instant::now();
-                }
-                _ = self.timeout_sender.closed() => {
+                },
+                event = recv_fut => {
+                    if event.is_some() {
+                        *self.last_activity.lock() = Instant::now();
+                    }
+                },
+                _ = drop_fut => {
                     // Manager dropped
                     break;
-                }
+                },
             }
         }
     }
@@ -109,7 +116,7 @@ impl IdleManager {
             .unwrap_or(Self::DEFAULT_IDLE_TIMEOUT);
 
         let (event_sender, event_receiver) = mpsc::channel(100);
-        let (timeout_sender, timeout_receiver) = watch::channel(());
+        let (drop_sender, drop_receiver) = oneshot::channel();
 
         let running = Arc::new(AtomicBool::new(true));
         let last_activity = Arc::new(Mutex::new(Instant::now()));
@@ -120,11 +127,11 @@ impl IdleManager {
             idle_timeout,
             last_activity.clone(),
             running.clone(),
-            timeout_sender.clone(),
+            drop_receiver,
         );
 
-        tokio::spawn(async move {
-            handler.run().await;
+        thread::spawn(move || {
+            block_on(handler.run());
         });
 
         let sender_clone = event_sender.clone();
@@ -142,14 +149,15 @@ impl IdleManager {
             }
         });
 
+        // TODO: The struct definition for `IdleManager` needs to be updated.
+        // The fields `_timeout_receiver` and `timeout_sender` should be replaced
+        // with a single field, for example: `_drop_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>`
         Self {
             context: Arc::new(Mutex::new(Context { callbacks })),
             idle_timeout,
-            is_initialized: Arc::new(Mutex::new(true)),
             running,
             event_sender: Arc::new(Mutex::new(event_sender)),
-            _timeout_receiver: Arc::new(timeout_receiver),
-            timeout_sender: Arc::new(timeout_sender),
+            _drop_sender: Arc::new(Mutex::new(drop_sender)),
         }
     }
 
@@ -173,10 +181,11 @@ impl IdleManager {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
     use std::time::Duration;
 
-    #[tokio::test]
-    async fn test_idle_manager() {
+    #[test]
+    fn test_idle_manager() {
         let options = IdleManagerOptions::builder().idle_timeout(500).build();
         let idle_manager = IdleManager::new(Some(options));
 
@@ -189,13 +198,13 @@ mod tests {
         assert!(!callback_triggered.load(Ordering::SeqCst));
 
         // Wait for the idle timeout to trigger
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        thread::sleep(Duration::from_millis(1000));
 
         assert!(callback_triggered.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
-    async fn test_idle_manager_with_reset_timer() {
+    #[test]
+    fn test_idle_manager_with_reset_timer() {
         let options = IdleManagerOptions::builder().idle_timeout(1000).build();
         let idle_manager = IdleManager::new(Some(options));
 
@@ -207,23 +216,23 @@ mod tests {
 
         assert!(!callback_triggered.load(Ordering::SeqCst));
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        thread::sleep(Duration::from_millis(500));
 
         // Reset timer
         idle_manager.reset_timer();
 
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        thread::sleep(Duration::from_millis(700));
 
         assert!(!callback_triggered.load(Ordering::SeqCst));
 
         // Wait for the idle timeout to trigger
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        thread::sleep(Duration::from_millis(500));
 
         assert!(callback_triggered.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
-    async fn test_exit() {
+    #[test]
+    fn test_exit() {
         let options = IdleManagerOptions::builder().idle_timeout(1000).build();
         let mut idle_manager = IdleManager::new(Some(options));
 
@@ -235,7 +244,7 @@ mod tests {
 
         assert!(!callback_triggered.load(Ordering::SeqCst));
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        thread::sleep(Duration::from_millis(500));
 
         idle_manager.exit();
 
@@ -247,7 +256,7 @@ mod tests {
         idle_manager.register_callback(move || {
             callback_triggered_clone.store(true, Ordering::SeqCst);
         });
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        thread::sleep(Duration::from_millis(1500));
         assert!(!callback_triggered.load(Ordering::SeqCst));
     }
 }
