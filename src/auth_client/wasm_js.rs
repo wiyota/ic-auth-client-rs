@@ -1,5 +1,5 @@
 use crate::{
-    ArcIdentity,
+    ArcIdentity, AuthClientError,
     api::{
         AuthResponseSuccess, IdentityServiceResponseKind, IdentityServiceResponseMessage,
         InternetIdentityAuthRequest,
@@ -94,14 +94,14 @@ impl AuthClient {
     }
 
     /// Creates a new [`AuthClient`] with default options.
-    pub async fn new() -> Result<Self, DelegationError> {
+    pub async fn new() -> Result<Self, AuthClientError> {
         Self::new_with_options(AuthClientCreateOptions::default()).await
     }
 
     /// Creates a new [`AuthClient`] with the provided options.
     pub async fn new_with_options(
         options: AuthClientCreateOptions,
-    ) -> Result<Self, DelegationError> {
+    ) -> Result<Self, AuthClientError> {
         let mut storage = options.storage.unwrap_or_default();
         let options_identity_is_some = options.identity.is_some();
 
@@ -126,27 +126,24 @@ impl AuthClient {
     async fn create_or_load_key(
         identity: Option<ArcIdentity>,
         storage: &mut AuthClientStorageType,
-    ) -> Result<Key, DelegationError> {
+    ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
-            None => {
-                if let Some(stored_key) = storage.get(KEY_STORAGE_KEY).await {
-                    let private_key = stored_key.decode().map_err(|e| {
-                        DelegationError::IdentityError(format!(
-                            "Failed to decode private key: {}",
-                            e
-                        ))
-                    })?;
-                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
-                } else {
-                    let mut rng = rand::thread_rng();
-                    let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
-                    let _ = storage
-                        .set(KEY_STORAGE_KEY, StoredKey::Raw(private_key))
-                        .await;
+            None => match storage.get(KEY_STORAGE_KEY).await {
+                Ok(Some(stored_key)) => {
+                    let private_key = stored_key.decode()?;
                     Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
                 }
-            }
+                Ok(None) => {
+                    let mut rng = rand::thread_rng();
+                    let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
+                    storage
+                        .set(KEY_STORAGE_KEY, StoredKey::Raw(private_key))
+                        .await?;
+                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
+                }
+                Err(e) => Err(e.into()),
+            },
         }
     }
 
@@ -175,31 +172,41 @@ impl AuthClient {
         let mut identity = ArcIdentity::from(key);
         let mut chain: Option<DelegationChain> = None;
 
-        if let Some(chain_stored) = storage.get(KEY_STORAGE_DELEGATION).await {
-            let chain_stored = chain_stored.encode();
-            let chain_result = DelegationChain::from_json(&chain_stored);
-            chain = Some(chain_result);
+        match storage.get(KEY_STORAGE_DELEGATION).await {
+            Ok(Some(chain_stored)) => {
+                let chain_stored = chain_stored.encode();
+                let chain_result = DelegationChain::from_json(&chain_stored);
+                chain = Some(chain_result);
 
-            let delegation_data = Self::get_delegation_data(&chain);
+                let delegation_data = Self::get_delegation_data(&chain);
 
-            match delegation_data {
-                Some((public_key, delegations)) => {
-                    if !public_key.is_empty() {
-                        identity =
-                            ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
-                                public_key,
-                                Box::new(key.as_arc_identity()),
-                                delegations,
-                            )));
+                match delegation_data {
+                    Some((public_key, delegations)) => {
+                        if !public_key.is_empty() {
+                            identity =
+                                ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
+                                    public_key,
+                                    Box::new(key.as_arc_identity()),
+                                    delegations,
+                                )));
+                        }
+                    }
+                    None => {
+                        #[cfg(feature = "tracing")]
+                        info!("Found invalid delegation chain in storage - clearing credentials");
+                        if let Err(_e) = Self::delete_storage(storage).await {
+                            #[cfg(feature = "tracing")]
+                            error!("Failed to delete storage: {}", _e);
+                        }
+                        identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+                        chain = None;
                     }
                 }
-                None => {
-                    #[cfg(feature = "tracing")]
-                    info!("Found invalid delegation chain in storage - clearing credentials");
-                    Self::delete_storage(storage).await;
-                    identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
-                    chain = None;
-                }
+            }
+            Ok(None) => (),
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to load delegation chain from storage: {}", _e);
             }
         }
 
@@ -303,17 +310,21 @@ impl AuthClient {
     /// Stores the delegation chain and key in storage.
     async fn update_storage_with_delegation(&self, delegation_chain: &DelegationChain) {
         if let Key::WithRaw(key) = &self.0.key {
-            let _ = self
+            if let Err(_e) = self
                 .0
                 .storage
                 .lock()
                 .await
                 .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()))
-                .await;
+                .await
+            {
+                #[cfg(feature = "tracing")]
+                error!("Failed to store key: {}", _e);
+            }
         }
 
         let chain_json = delegation_chain.to_json();
-        let _ = self
+        if let Err(_e) = self
             .0
             .storage
             .lock()
@@ -322,7 +333,11 @@ impl AuthClient {
                 KEY_STORAGE_DELEGATION,
                 StoredKey::String(chain_json.clone()),
             )
-            .await;
+            .await
+        {
+            #[cfg(feature = "tracing")]
+            error!("Failed to store delegation: {}", _e);
+        }
     }
 
     /// Updates the in-memory identity with the new delegation.
@@ -485,7 +500,7 @@ impl AuthClient {
         };
 
         match web_sys::Url::new(identity_provider_url) {
-            Ok(mut url) => {
+            Ok(url) => {
                 url.set_hash(IDENTITY_PROVIDER_ENDPOINT);
                 Some(url)
             }
@@ -737,31 +752,44 @@ impl AuthClient {
         chain: Arc<Mutex<Option<DelegationChain>>>,
         return_to: Option<Location>,
     ) {
-        Self::delete_storage(storage).await;
+        if let Err(_e) = Self::delete_storage(storage).await {
+            #[cfg(feature = "tracing")]
+            error!("Failed to delete storage: {}", _e);
+        }
 
         // Reset this auth client to a non-authenticated state.
         *identity.lock() = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
         chain.lock().take();
 
-        // If a return URL is provided, redirect the user to that URL.
-        if let Some(return_to) = return_to {
-            let window = window();
-            let href_result = return_to.href();
-            if let Ok(href) = href_result {
-                if let Ok(history) = window.history() {
-                    if history
-                        .push_state_with_url(&JsValue::null(), "", Some(&href))
-                        .is_err()
-                        && window.location().set_href(&href).is_err()
-                    {
-                        #[cfg(feature = "tracing")]
-                        error!("Failed to set href during logout");
-                    }
-                } else if window.location().set_href(&href).is_err() {
-                    #[cfg(feature = "tracing")]
-                    error!("Failed to set href during logout (no history)");
-                }
+        if let Some(location) = return_to {
+            Self::redirect_user(location);
+        }
+    }
+
+    /// Handles redirecting the user after logout.
+    fn redirect_user(location: Location) {
+        let href = match location.href() {
+            Ok(href) => href,
+            Err(_) => {
+                #[cfg(feature = "tracing")]
+                error!("Could not get href from return_to location");
+                return;
             }
+        };
+
+        let history_redirect_success = window()
+            .history()
+            .and_then(|history| history.push_state_with_url(&JsValue::null(), "", Some(&href)))
+            .is_ok();
+
+        if history_redirect_success {
+            return;
+        }
+
+        // Fallback to assigning location.href
+        if window().location().set_href(&href).is_err() {
+            #[cfg(feature = "tracing")]
+            error!("Failed to set href during logout");
         }
     }
 
@@ -783,13 +811,14 @@ impl AuthClient {
     }
 
     /// Deletes the stored keys from the provided storage.
-    async fn delete_storage<S>(storage: &mut S)
+    async fn delete_storage<S>(storage: &mut S) -> Result<(), crate::storage::StorageError>
     where
         S: AuthClientStorage,
     {
-        let _ = storage.remove(KEY_STORAGE_KEY).await;
-        let _ = storage.remove(KEY_STORAGE_DELEGATION).await;
-        let _ = storage.remove(KEY_VECTOR).await;
+        storage.remove(KEY_STORAGE_KEY).await?;
+        storage.remove(KEY_STORAGE_DELEGATION).await?;
+        storage.remove(KEY_VECTOR).await?;
+        Ok(())
     }
 }
 
@@ -892,7 +921,7 @@ impl AuthClientBuilder {
     }
 
     /// Builds a new [`AuthClient`].
-    pub async fn build(self) -> Result<AuthClient, DelegationError> {
+    pub async fn build(self) -> Result<AuthClient, AuthClientError> {
         let options = AuthClientCreateOptions {
             identity: self.identity,
             storage: self.storage,

@@ -26,4 +26,4 @@ pub use option::native::NativeAuthClientCreateOptions;
 #[cfg(feature = "wasm-js")]
 pub use option::wasm_js::AuthClientCreateOptions;
 pub use option::{AuthClientLoginOptions, IdleOptions};
-pub use util::{callback, delegation_chain};
+pub use util::{arc_identity::ArcIdentity, callback, delegation_chain};

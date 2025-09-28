@@ -1,5 +1,5 @@
 use crate::{
-    ArcIdentity,
+    ArcIdentity, AuthClientError,
     api::AuthResponseSuccess,
     idle_manager::{IdleManager, IdleManagerOptions},
     key::{BaseKeyType, Key, KeyWithRaw},
@@ -11,18 +11,66 @@ use crate::{
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
 };
 use ed25519_dalek::SigningKey;
+use futures::{channel::oneshot, executor::block_on};
 use ic_agent::{
     export::Principal,
     identity::{AnonymousIdentity, DelegatedIdentity, DelegationError, Identity, SignedDelegation},
 };
 use parking_lot::Mutex;
-use std::{
-    sync::{Arc, mpsc},
-    thread,
-    time::Duration,
-};
+use std::{sync::Arc, thread, time::Duration};
 use tiny_http::{Response, Server};
 use url::Url;
+
+/// Errors that can occur during the login process.
+///
+/// This enum represents all the possible error conditions that may arise
+/// when attempting to authenticate a user through the Internet Identity
+/// authentication flow.
+#[derive(Debug, thiserror::Error)]
+pub enum NativeLoginError {
+    /// No free ports are available on the local machine to start the callback server.
+    #[error("No free ports available")]
+    NoFreePort,
+    /// An error occurred while starting or running the local HTTP server.
+    #[error("Server error: {0}")]
+    ServerError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Failed to parse a URL during the authentication process.
+    #[error("URL parse error: {0}")]
+    UrlParseError(#[from] url::ParseError),
+    /// Failed to open the user's default web browser for authentication.
+    #[error("Failed to open browser: {0}")]
+    BrowserOpenError(String),
+    /// The server timed out while waiting for the authentication callback.
+    #[error("Server receive timed out")]
+    ServerTimeout,
+    /// The server thread handling the authentication callback panicked.
+    #[error("Server thread panicked")]
+    ServerThreadPanicked,
+    /// Failed to receive the delegation response through the internal message channel.
+    #[error("Failed to receive delegation")]
+    OneshotRecvError,
+    /// Failed to deserialize the JSON response from the identity provider.
+    #[error("JSON deserialization error: {0}")]
+    JsonError(#[from] serde_json::Error),
+    /// An error occurred while processing the delegation chain.
+    #[error("Delegation error: {0}")]
+    DelegationError(#[from] DelegationError),
+    /// The authentication callback was missing required delegation or error parameters.
+    #[error("Missing delegation or error parameter in redirect")]
+    MissingDelegationOrError,
+    /// The callback server received a request to an unexpected URL path.
+    #[error("Unexpected request path: {0}")]
+    UnexpectedRequestPath(String),
+    /// A custom error occurred during authentication.
+    #[error("Custom error: {0}")]
+    Custom(String),
+}
+
+#[derive(Debug)]
+enum CallbackResult {
+    Success(AuthResponseSuccess),
+    Error(NativeLoginError),
+}
 
 #[derive(Debug)]
 pub(super) struct AuthClientInner {
@@ -42,10 +90,10 @@ pub struct NativeAuthClient(Arc<AuthClientInner>);
 
 impl NativeAuthClient {
     /// Creates a new [`AuthClient`] with default options.
-    pub fn new(service_name: String) -> Result<Self, DelegationError> {
+    pub fn new<T: Into<String>>(service_name: T) -> Result<Self, AuthClientError> {
         let options = NativeAuthClientCreateOptions::builder()
             .storage(AuthClientStorageType::Keyring(KeyringStorage::new(
-                service_name,
+                service_name.into(),
             )))
             .build();
         Self::new_with_options(options)
@@ -55,11 +103,11 @@ impl NativeAuthClient {
     fn create_or_load_key(
         identity: Option<ArcIdentity>,
         storage: &mut AuthClientStorageType,
-    ) -> Result<Key, DelegationError> {
+    ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
-            None => {
-                if let Some(stored_key) = storage.get(KEY_STORAGE_KEY) {
+            None => match storage.get(KEY_STORAGE_KEY) {
+                Ok(Some(stored_key)) => {
                     let private_key = stored_key.decode().map_err(|e| {
                         DelegationError::IdentityError(format!(
                             "Failed to decode private key: {}",
@@ -67,13 +115,15 @@ impl NativeAuthClient {
                         ))
                     })?;
                     Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
-                } else {
+                }
+                Ok(None) => {
                     let mut rng = rand::thread_rng();
                     let private_key = SigningKey::generate(&mut rng).to_bytes();
-                    storage.set(KEY_STORAGE_KEY, StoredKey::Raw(private_key));
+                    storage.set(KEY_STORAGE_KEY, StoredKey::Raw(private_key))?;
                     Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
                 }
-            }
+                Err(e) => Err(e.into()),
+            },
         }
     }
 
@@ -102,31 +152,38 @@ impl NativeAuthClient {
         let mut identity = ArcIdentity::from(key.clone());
         let mut chain: Option<DelegationChain> = None;
 
-        if let Some(chain_stored) = storage.get(KEY_STORAGE_DELEGATION) {
-            let chain_stored = chain_stored.encode();
-            let chain_result = DelegationChain::from_json(&chain_stored);
-            chain = Some(chain_result);
+        match storage.get(KEY_STORAGE_DELEGATION) {
+            Ok(Some(chain_stored)) => {
+                let chain_stored = chain_stored.encode();
+                let chain_result = DelegationChain::from_json(&chain_stored);
+                chain = Some(chain_result);
 
-            let delegation_data = Self::get_delegation_data(&chain);
+                let delegation_data = Self::get_delegation_data(&chain);
 
-            match delegation_data {
-                Some((public_key, delegations)) => {
-                    if !public_key.is_empty() {
-                        identity =
-                            ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
-                                public_key,
-                                Box::new(key.as_arc_identity()),
-                                delegations,
-                            )));
+                match delegation_data {
+                    Some((public_key, delegations)) => {
+                        if !public_key.is_empty() {
+                            identity =
+                                ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
+                                    public_key,
+                                    Box::new(key.as_arc_identity()),
+                                    delegations,
+                                )));
+                        }
+                    }
+                    None => {
+                        #[cfg(feature = "tracing")]
+                        info!("Found invalid delegation chain in storage - clearing credentials");
+                        let _ = Self::delete_storage_native(storage);
+                        identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+                        chain = None;
                     }
                 }
-                None => {
-                    #[cfg(feature = "tracing")]
-                    info!("Found invalid delegation chain in storage - clearing credentials");
-                    Self::delete_storage_native(storage);
-                    identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
-                    chain = None;
-                }
+            }
+            Ok(None) => (),
+            Err(_e) => {
+                #[cfg(feature = "tracing")]
+                error!("Failed to load delegation chain from storage: {}", _e);
             }
         }
         (chain, identity)
@@ -156,7 +213,7 @@ impl NativeAuthClient {
     /// Creates a new [`AuthClient`] with the provided options.
     pub fn new_with_options(
         options: NativeAuthClientCreateOptions,
-    ) -> Result<Self, DelegationError> {
+    ) -> Result<Self, AuthClientError> {
         let mut storage = options.storage;
         let options_identity_is_some = options.identity.is_some();
 
@@ -268,18 +325,25 @@ impl NativeAuthClient {
     /// Stores the delegation chain and key in storage.
     fn update_storage_with_delegation(&self, delegation_chain: &DelegationChain) {
         if let Key::WithRaw(key) = &self.0.key {
-            let _ = self
+            if let Err(_e) = self
                 .0
                 .storage
                 .lock()
-                .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()));
+                .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()))
+            {
+                #[cfg(feature = "tracing")]
+                error!("Failed to store key: {}", _e);
+            }
         }
 
         let chain_json = delegation_chain.to_json();
-        let _ = self.0.storage.lock().set(
+        if let Err(_e) = self.0.storage.lock().set(
             KEY_STORAGE_DELEGATION,
             StoredKey::String(chain_json.clone()),
-        );
+        ) {
+            #[cfg(feature = "tracing")]
+            error!("Failed to store delegation: {}", _e);
+        }
     }
 
     /// Updates the in-memory identity with the new delegation.
@@ -373,148 +437,187 @@ impl NativeAuthClient {
         }
     }
 
-    /// Processes the query parameters from the redirect URL.
-    fn process_query_params(
-        request: tiny_http::Request,
-        query_params: std::collections::HashMap<String, String>,
-        tx: &mpsc::Sender<Result<String, String>>,
-    ) {
-        if let Some(response) = query_params.get("response") {
-            let decoded_response = percent_encoding::percent_decode_str(response)
-                .decode_utf8_lossy()
-                .to_string();
-            let _ = tx.send(Ok(decoded_response));
-            let response = Response::from_string(
-                "<h1>Login successful!</h1><p>You can close this window.</p>",
-            )
-            .with_header(
-                "Content-Type: text/html"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
-        } else if let Some(error) = query_params.get("error") {
-            let _ = tx.send(Err(error.to_string()));
-            let response = Response::from_string(format!(
-                "<h1>Login failed!</h1><p>Error: {}</p><p>You can close this window.</p>",
-                error
-            ))
-            .with_header(
-                "Content-Type: text/html"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
-        } else {
-            let _ = tx.send(Err("Missing delegation or error parameter".to_string()));
-            let response = Response::from_string(
-                "<h1>Login failed!</h1><p>Missing delegation or error parameter.</p><p>You can close this window.</p>",
-            )
-            .with_header(
-                "Content-Type: text/html"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
-        }
-    }
-
     /// Handles the redirect from the identity provider.
-    fn handle_redirect(request: tiny_http::Request, tx: &mpsc::Sender<Result<String, String>>) {
-        let full_url = format!("http://127.0.0.1{}", request.url());
-        if let Ok(url) = Url::parse(&full_url) {
-            let query_params: std::collections::HashMap<_, _> =
-                url.query_pairs().into_owned().collect();
-            Self::process_query_params(request, query_params, tx);
-        } else {
-            let _ = tx.send(Err("Failed to parse redirect URL".to_string()));
-            let response =
-                Response::from_string("<h1>Login failed!</h1><p>Could not parse redirect URL.</p>")
-                    .with_header(
-                        "Content-Type: text/html"
-                            .parse::<tiny_http::Header>()
-                            .unwrap(),
-                    );
-            let _ = request.respond(response);
-        }
+    fn handle_get_redirect(request: tiny_http::Request, tx: oneshot::Sender<CallbackResult>) {
+        let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
+            "Login window closed or redirect failed.".to_string(),
+        )));
+        let response = Response::from_string(
+            "<h1>Login failed!</h1><p>Login window closed or redirect failed.</p>",
+        )
+        .with_header(
+            "Content-Type: text/html"
+                .parse::<tiny_http::Header>()
+                .unwrap(),
+        );
+        let _ = request.respond(response);
     }
 
-    /// Handles incoming requests to the local server.
-    fn handle_request(request: tiny_http::Request, tx: &mpsc::Sender<Result<String, String>>) {
-        if request.url().starts_with("/redirect") {
-            Self::handle_redirect(request, tx);
-        } else {
-            let response = Response::from_string("<h1>Waiting for Internet Identity login...</h1>")
-                .with_header(
-                    "Content-Type: text/html"
-                        .parse::<tiny_http::Header>()
-                        .unwrap(),
+    /// Handles incoming POST requests with authentication data.
+    fn handle_post_callback(mut request: tiny_http::Request, tx: oneshot::Sender<CallbackResult>) {
+        let mut content = String::new();
+        if let Err(e) = request.as_reader().read_to_string(&mut content) {
+            let _ = tx.send(CallbackResult::Error(NativeLoginError::ServerError(
+                Box::new(e),
+            )));
+            let _ = request
+                .respond(Response::from_string("Error reading request body").with_status_code(500));
+            return;
+        }
+
+        let json: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(json) => json,
+            Err(e) => {
+                let _ = tx.send(CallbackResult::Error(NativeLoginError::JsonError(e)));
+                let _ = request.respond(
+                    Response::from_string("Error parsing JSON body").with_status_code(400),
                 );
-            let _ = request.respond(response);
-            let _ = tx.send(Err("Unexpected request path".to_string()));
-        }
-    }
-
-    /// Spawns a thread to wait for the delegation from the identity provider.
-    fn wait_for_delegation(
-        server: Server,
-        timeout: Option<Duration>,
-        tx: mpsc::Sender<Result<String, String>>,
-    ) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            if let Ok(Some(request)) =
-                server.recv_timeout(timeout.unwrap_or(Duration::from_secs(300)))
-            {
-                Self::handle_request(request, &tx);
-            } else {
-                let _ = tx.send(Err("Server receive timed out".to_string()));
+                return;
             }
-        })
+        };
+
+        let response_type = json["type"].as_str();
+
+        match response_type {
+            Some("success") => {
+                match serde_json::from_value::<AuthResponseSuccess>(json["data"].clone()) {
+                    Ok(success_data) => {
+                        let _ = tx.send(CallbackResult::Success(success_data));
+                        let _ = request.respond(Response::from_string("OK").with_status_code(200));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(CallbackResult::Error(NativeLoginError::JsonError(e)));
+                        let _ = request.respond(
+                            Response::from_string("Error parsing success data")
+                                .with_status_code(400),
+                        );
+                    }
+                }
+            }
+            Some("error") => {
+                let error_message = json["data"].as_str().unwrap_or("Unknown error").to_string();
+                let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
+                    error_message,
+                )));
+                let _ = request.respond(Response::from_string("Error").with_status_code(200));
+            }
+            _ => {
+                let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
+                    "Invalid response type".to_string(),
+                )));
+                let _ = request
+                    .respond(Response::from_string("Invalid response type").with_status_code(400));
+            }
+        }
     }
 
     /// Finishes the login process after the delegation has been received.
-    fn finish_login(
+    async fn finish_login(
         &self,
-        rx: mpsc::Receiver<Result<String, String>>,
-        server_handle: thread::JoinHandle<()>,
+        rx: oneshot::Receiver<CallbackResult>,
         on_success: Option<OnSuccess>,
-    ) -> Result<(), String> {
-        let delegation_str = rx.recv().map_err(|e| e.to_string())??;
-        server_handle
-            .join()
-            .map_err(|_| "Server thread panicked".to_string())?;
+    ) -> Result<(), NativeLoginError> {
+        let callback_result = rx.await.map_err(|_| NativeLoginError::OneshotRecvError)?;
 
-        let auth_success: AuthResponseSuccess =
-            serde_json::from_str(&delegation_str).map_err(|e| e.to_string())?;
-
-        match self.handle_success(auth_success, on_success) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e.to_string()),
+        match callback_result {
+            CallbackResult::Success(auth_success) => {
+                match self.handle_success(auth_success, on_success) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(NativeLoginError::DelegationError(e)),
+                }
+            }
+            CallbackResult::Error(e) => Err(e),
         }
     }
 
     /// Logs the user in by opening a browser window to the identity provider.
-    pub fn login<T: AsRef<str>>(
+    pub fn login<T: AsRef<str> + Send + 'static>(
         &self,
         ii_url: T,
         options: AuthClientLoginOptions,
-    ) -> Result<(), String> {
-        let port = portpicker::pick_unused_port().ok_or_else(|| "No free ports".to_string())?;
-        let redirect_uri = format!("http://127.0.0.1:{}", port);
+    ) {
+        let client = self.clone();
+        let ii_url = ii_url.as_ref().to_string();
 
-        let server = Server::http(redirect_uri.clone()).map_err(|e| e.to_string())?;
-        let (tx, rx) = mpsc::channel::<Result<String, String>>();
+        thread::spawn(move || {
+            let on_error = options.on_error.clone();
+            if let Err(e) = block_on(client.login_task(ii_url, options)) {
+                if let Some(on_error) = on_error {
+                    on_error.0.lock()(Some(e.to_string()));
+                }
+            }
+        });
+    }
+
+    fn start_http_server(server: Server, tx: oneshot::Sender<CallbackResult>, timeout: Duration) {
+        thread::spawn(move || {
+            let start_time = std::time::Instant::now();
+
+            while start_time.elapsed() < timeout {
+                let request = match server.recv_timeout(Duration::from_millis(500)) {
+                    Ok(Some(request)) => request,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        #[cfg(feature = "tracing")]
+                        error!("Server error while receiving request: {}", e);
+                        let _ = tx.send(CallbackResult::Error(NativeLoginError::ServerError(
+                            Box::new(e),
+                        )));
+                        return;
+                    }
+                };
+
+                let handler: Option<fn(tiny_http::Request, oneshot::Sender<CallbackResult>)> =
+                    if request.method() == &tiny_http::Method::Post
+                        && request.url().starts_with("/auth-callback")
+                    {
+                        Some(Self::handle_post_callback)
+                    } else if request.method() == &tiny_http::Method::Get {
+                        Some(Self::handle_get_redirect)
+                    } else {
+                        None
+                    };
+
+                if let Some(handler_fn) = handler {
+                    handler_fn(request, tx);
+                    return;
+                }
+
+                // Fallback for any other request.
+                let response = Response::from_string("").with_status_code(204);
+                if let Err(e) = request.respond(response) {
+                    #[cfg(feature = "tracing")]
+                    error!("Failed to respond to unexpected request: {}", e);
+                }
+            }
+
+            let _ = tx.send(CallbackResult::Error(NativeLoginError::ServerTimeout));
+        });
+    }
+
+    async fn login_task<T: AsRef<str>>(
+        &self,
+        ii_url: T,
+        options: AuthClientLoginOptions,
+    ) -> Result<(), NativeLoginError> {
+        let port = portpicker::pick_unused_port().ok_or(NativeLoginError::NoFreePort)?;
+        let redirect_uri = format!("http://127.0.0.1:{}/auth-callback", port);
+
+        let server = Server::http(format!("127.0.0.1:{}", port))?;
+        let (tx, rx) = oneshot::channel::<CallbackResult>();
 
         let public_key_hex = hex::encode(self.0.key.public_key().unwrap());
 
-        let mut url = Url::parse(ii_url.as_ref()).map_err(|e| e.to_string())?;
+        let mut url = Url::parse(ii_url.as_ref()).map_err(NativeLoginError::UrlParseError)?;
         Self::set_query_params(&mut url, &options, &redirect_uri, &public_key_hex);
 
-        webbrowser::open(url.as_str()).map_err(|e| e.to_string())?;
+        webbrowser::open(url.as_str())
+            .map_err(|e| NativeLoginError::BrowserOpenError(e.to_string()))?;
 
-        let server_handle = Self::wait_for_delegation(server, options.timeout, tx);
+        let timeout = options.timeout.unwrap_or(Duration::from_secs(300));
+        Self::start_http_server(server, tx, timeout);
 
-        self.finish_login(rx, server_handle, options.on_success)
+        self.finish_login(rx, options.on_success).await
     }
 
     /// Sets the query parameters for the identity provider URL.
@@ -563,7 +666,10 @@ impl NativeAuthClient {
         storage: &mut S,
         chain: Arc<Mutex<Option<DelegationChain>>>,
     ) {
-        Self::delete_storage_native(storage);
+        if let Err(_e) = Self::delete_storage_native(storage) {
+            #[cfg(feature = "tracing")]
+            error!("Failed to delete storage: {}", _e);
+        }
 
         // Reset this auth client to a non-authenticated state.
         *identity.lock() = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
@@ -585,11 +691,12 @@ impl NativeAuthClient {
     }
 
     /// Deletes the key and delegation from storage.
-    fn delete_storage_native<S>(storage: &mut S)
+    fn delete_storage_native<S>(storage: &mut S) -> Result<(), crate::storage::StorageError>
     where
         S: AuthClientStorage,
     {
-        let _ = storage.remove(KEY_STORAGE_KEY);
-        let _ = storage.remove(KEY_STORAGE_DELEGATION);
+        storage.remove(KEY_STORAGE_KEY)?;
+        storage.remove(KEY_STORAGE_DELEGATION)?;
+        Ok(())
     }
 }
