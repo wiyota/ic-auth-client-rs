@@ -2,7 +2,7 @@
 //!
 //! This module provides keyring-based storage for secure credential management.
 
-use super::StoredKey;
+use super::{StorageError, StoredKey};
 use keyring::Entry;
 
 const KEYRING_STORAGE_PREFIX: &str = "ic-";
@@ -21,78 +21,34 @@ impl KeyringStorage {
 }
 
 impl AuthClientStorage for KeyringStorage {
-    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Result<Option<StoredKey>, StorageError> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(&self.service_name, &key) {
-            Ok(entry) => entry,
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not create keyring entry: {_e:?}");
-                return None;
-            }
-        };
-        let value = match entry.get_secret() {
-            Ok(value) => value,
-            Err(_e) => return None,
-        };
-        match value.try_into() {
-            Ok(value) => Some(value),
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not convert value to StoredKey: {_e:?}");
-                None
-            }
+        let entry = Entry::new(&self.service_name, &key)?;
+        match entry.get_secret() {
+            Ok(value) => Ok(Some(value.try_into()?)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 
-    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(&self.service_name, &key) {
-            Ok(entry) => entry,
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not create keyring entry: {_e:?}");
-                return Err(());
-            }
-        };
+        let entry = Entry::new(&self.service_name, &key)?;
         let value = match value {
-            StoredKey::String(_) => match value.decode() {
-                Ok(value) => value,
-                Err(_) => {
-                    #[cfg(feature = "tracing")]
-                    error!("Could not decode string value");
-                    return Err(());
-                }
-            },
+            StoredKey::String(_) => value.decode()?,
             StoredKey::Raw(value) => value,
         };
-        match entry.set_secret(&value) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not set item in keyring");
-                Err(())
-            }
-        }
+        entry.set_secret(&value)?;
+        Ok(())
     }
 
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), StorageError> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
-        let entry = match Entry::new(&self.service_name, &key) {
-            Ok(entry) => entry,
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not create keyring entry: {_e:?}");
-                return Err(());
-            }
-        };
+        let entry = Entry::new(&self.service_name, &key)?;
         match entry.delete_credential() {
             Ok(_) => Ok(()),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not remove item from keyring");
-                Err(())
-            }
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -105,19 +61,19 @@ pub enum AuthClientStorageType {
 }
 
 impl AuthClientStorage for AuthClientStorageType {
-    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Result<Option<StoredKey>, StorageError> {
         match self {
             AuthClientStorageType::Keyring(storage) => storage.get(key),
         }
     }
 
-    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError> {
         match self {
             AuthClientStorageType::Keyring(storage) => storage.set(key, value),
         }
     }
 
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), StorageError> {
         match self {
             AuthClientStorageType::Keyring(storage) => storage.remove(key),
         }
@@ -132,9 +88,10 @@ pub trait AuthClientStorage {
     /// * `key` - The key to look up in storage
     ///
     /// # Returns
-    /// * `Some(StoredKey)` if the key exists in storage
-    /// * `None` if the key doesn't exist or an error occurred
-    fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey>;
+    /// * `Ok(Some(StoredKey))` if the key exists in storage
+    /// * `Ok(None)` if the key does not exist
+    /// * `Err(StorageError)` if an error occurred
+    fn get<T: AsRef<str>>(&mut self, key: T) -> Result<Option<StoredKey>, StorageError>;
 
     /// Stores a key-value pair in the storage.
     ///
@@ -144,8 +101,8 @@ pub trait AuthClientStorage {
     ///
     /// # Returns
     /// * `Ok(())` if the value was successfully stored
-    /// * `Err(())` if an error occurred during storage
-    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()>;
+    /// * `Err(StorageError)` if an error occurred during storage
+    fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError>;
 
     /// Removes a stored value by key.
     ///
@@ -154,6 +111,6 @@ pub trait AuthClientStorage {
     ///
     /// # Returns
     /// * `Ok(())` if the key was successfully removed
-    /// * `Err(())` if an error occurred during removal
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()>;
+    /// * `Err(StorageError)` if an error occurred during removal
+    fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), StorageError>;
 }

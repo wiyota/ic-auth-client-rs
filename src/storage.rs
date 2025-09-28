@@ -4,6 +4,7 @@
 //! It includes support for both asynchronous and synchronous storage backends.
 
 use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine as _};
+use thiserror::Error;
 
 #[cfg(feature = "wasm-js")]
 pub mod async_storage;
@@ -102,6 +103,38 @@ pub enum DecodeError {
     #[error("Base64 error: {0}")]
     Base64(base64::DecodeError),
 }
+
+/// Error type for storage operations.
+#[derive(Error, Debug)]
+pub enum StorageError {
+    /// An error from the keyring.
+    #[error("Keyring error: {0}")]
+    Keyring(String),
+    /// An error from the web-sys storage.
+    #[error("Web Sys error: {0}")]
+    WebSys(String),
+    /// An error that occurred during decoding.
+    #[error("Decode error: {0}")]
+    Decode(#[from] DecodeError),
+}
+
+#[cfg(feature = "native")]
+impl From<keyring::Error> for StorageError {
+    fn from(err: keyring::Error) -> Self {
+        StorageError::Keyring(err.to_string())
+    }
+}
+
+#[cfg(feature = "wasm-js")]
+impl From<web_sys::wasm_bindgen::JsValue> for StorageError {
+    fn from(err: web_sys::wasm_bindgen::JsValue) -> Self {
+        StorageError::WebSys(
+            err.as_string()
+                .unwrap_or_else(|| "unknown websys error".to_string()),
+        )
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

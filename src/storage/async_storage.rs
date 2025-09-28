@@ -2,16 +2,10 @@
 //!
 //! This module provides browser-based storage for secure credential management.
 
-use super::{DecodeError, StoredKey};
-use web_sys::{Storage, wasm_bindgen::JsValue};
+use super::{StorageError, StoredKey};
+use web_sys::Storage;
 
 const LOCAL_STORAGE_PREFIX: &str = "ic-";
-
-impl From<DecodeError> for JsValue {
-    fn from(err: DecodeError) -> Self {
-        JsValue::from_str(&err.to_string())
-    }
-}
 
 /// Implementation of [`AuthClientStorage`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -36,51 +30,32 @@ impl LocalStorage {
 }
 
 impl AuthClientStorage for LocalStorage {
-    async fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
-        let local_storage = self.get_local_storage()?;
+    async fn get<T: AsRef<str>>(&mut self, key: T) -> Result<Option<StoredKey>, StorageError> {
+        let local_storage = self
+            .get_local_storage()
+            .ok_or_else(|| StorageError::WebSys("LocalStorage not available".to_string()))?;
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        let value = match local_storage.get_item(&key) {
-            Ok(value) => value,
-            Err(_e) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not get item from local storage: {_e:?}");
-                return None;
-            }
-        };
-        value.map(StoredKey::String)
+        let value = local_storage.get_item(&key)?;
+        Ok(value.map(StoredKey::String))
     }
 
-    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
-        let local_storage = match self.get_local_storage() {
-            Some(local_storage) => local_storage,
-            None => return Err(()),
-        };
+    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError> {
+        let local_storage = self
+            .get_local_storage()
+            .ok_or_else(|| StorageError::WebSys("LocalStorage not available".to_string()))?;
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
         let value = value.encode();
-        match local_storage.set_item(&key, value.as_ref()) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not set item in local storage");
-                Err(())
-            }
-        }
+        local_storage.set_item(&key, value.as_ref())?;
+        Ok(())
     }
 
-    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
-        let local_storage = match self.get_local_storage() {
-            Some(local_storage) => local_storage,
-            None => return Err(()),
-        };
+    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), StorageError> {
+        let local_storage = self
+            .get_local_storage()
+            .ok_or_else(|| StorageError::WebSys("LocalStorage not available".to_string()))?;
         let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key.as_ref());
-        match local_storage.remove_item(&key) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                #[cfg(feature = "tracing")]
-                error!("Could not remove item from local storage");
-                Err(())
-            }
-        }
+        local_storage.remove_item(&key)?;
+        Ok(())
     }
 }
 
@@ -98,19 +73,19 @@ impl Default for AuthClientStorageType {
 }
 
 impl AuthClientStorage for AuthClientStorageType {
-    async fn get<T: AsRef<str>>(&mut self, key: T) -> Option<StoredKey> {
+    async fn get<T: AsRef<str>>(&mut self, key: T) -> Result<Option<StoredKey>, StorageError> {
         match self {
             AuthClientStorageType::LocalStorage(storage) => storage.get(key).await,
         }
     }
 
-    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), ()> {
+    async fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError> {
         match self {
             AuthClientStorageType::LocalStorage(storage) => storage.set(key, value).await,
         }
     }
 
-    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), ()> {
+    async fn remove<T: AsRef<str>>(&mut self, key: T) -> Result<(), StorageError> {
         match self {
             AuthClientStorageType::LocalStorage(storage) => storage.remove(key).await,
         }
@@ -125,9 +100,12 @@ pub trait AuthClientStorage {
     /// - `key`: The key to retrieve the value for. The key will be prefixed with the storage prefix.
     ///
     /// # Returns
-    /// Returns `Some(StoredKey)` if the key exists in storage, or `None` if the key doesn't exist
-    /// or if there was an error accessing the storage.
-    fn get<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Option<StoredKey>>;
+    /// Returns `Ok(Some(StoredKey))` if the key exists in storage, `Ok(None)` if not, or
+    /// `Err(StorageError)` if there was an error accessing the storage.
+    fn get<T: AsRef<str>>(
+        &mut self,
+        key: T,
+    ) -> impl std::future::Future<Output = Result<Option<StoredKey>, StorageError>>;
 
     /// Stores a value with the given key in the storage backend.
     ///
@@ -136,13 +114,13 @@ pub trait AuthClientStorage {
     /// - `value`: The value to store, which will be encoded before storage.
     ///
     /// # Returns
-    /// Returns `Ok(())` if the value was successfully stored, or `Err(())` if there was an error
-    /// accessing the storage or storing the value.
+    /// Returns `Ok(())` if the value was successfully stored, or `Err(StorageError)` if there was an
+    /// error accessing the storage or storing the value.
     fn set<T: AsRef<str>>(
         &mut self,
         key: T,
         value: StoredKey,
-    ) -> impl Future<Output = Result<(), ()>>;
+    ) -> impl std::future::Future<Output = Result<(), StorageError>>;
 
     /// Removes a stored value by key from the storage backend.
     ///
@@ -150,9 +128,12 @@ pub trait AuthClientStorage {
     /// - `key`: The key to remove from storage. The key will be prefixed with the storage prefix.
     ///
     /// # Returns
-    /// Returns `Ok(())` if the key was successfully removed or didn't exist, or `Err(())` if there
-    /// was an error accessing the storage.
-    fn remove<T: AsRef<str>>(&mut self, key: T) -> impl Future<Output = Result<(), ()>>;
+    /// Returns `Ok(())` if the key was successfully removed or didn't exist, or `Err(StorageError)`
+    /// if there was an error accessing the storage.
+    fn remove<T: AsRef<str>>(
+        &mut self,
+        key: T,
+    ) -> impl std::future::Future<Output = Result<(), StorageError>>;
 }
 
 #[allow(dead_code)]
@@ -167,9 +148,9 @@ mod tests {
         let value = StoredKey::String("value".to_string());
         storage.set("test", value).await.unwrap();
         let value = storage.get("test").await.unwrap();
-        assert_eq!(value, StoredKey::String("value".to_string()));
+        assert_eq!(value, Some(StoredKey::String("value".to_string())));
         storage.remove("test").await.unwrap();
-        let value = storage.get("test").await;
+        let value = storage.get("test").await.unwrap();
         assert_eq!(value, None);
     }
 
@@ -179,9 +160,9 @@ mod tests {
         let value = StoredKey::String("value".to_string());
         storage.set("test", value).await.unwrap();
         let value = storage.get("test").await.unwrap();
-        assert_eq!(value, StoredKey::String("value".to_string()));
+        assert_eq!(value, Some(StoredKey::String("value".to_string())));
         storage.remove("test").await.unwrap();
-        let value = storage.get("test").await;
+        let value = storage.get("test").await.unwrap();
         assert_eq!(value, None);
     }
 }
