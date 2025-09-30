@@ -1,0 +1,26 @@
+{
+  "name": "@pavus/ii_integration",
+  "private": true,
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@dfinity/auth-client": "^3.2.6",
+    "@icp-sdk/core": "^4.0.4",
+    "@noble/hashes": "^1.8.0",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1",
+    "vite": "^7.1.7",
+    "vite-plugin-environment": "^1.1.3"
+  }
+}
