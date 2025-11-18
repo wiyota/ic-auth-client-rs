@@ -1,4 +1,4 @@
-use crate::contexts::auth::{AuthStore, AuthStoreStoreFields, use_auth};
+use crate::contexts::auth::{AuthStore, AuthStoreFields, use_auth};
 use domain::note::{NoteId, NoteTitle, entity::Note};
 use leptos::{
     either::Either,
@@ -8,7 +8,6 @@ use leptos::{
     task::spawn_local,
 };
 use leptos_fetch::QueryClient;
-use reactive_stores::Store;
 use std::collections::BTreeMap;
 
 async fn fetch_note(id: Option<NoteId>) -> Option<Note> {
@@ -20,12 +19,20 @@ async fn fetch_note(id: Option<NoteId>) -> Option<Note> {
         .await
 }
 
-type PostNote = Action<(Store<AuthStore>, Note), ()>;
+async fn fetch_note_list() -> Vec<(NoteId, NoteTitle)> {
+    match use_auth().unwrap().backend().get_untracked() {
+        Some(backend) => backend.fetch_note_list().await,
+        None => {
+            console_warn("Backend is not available");
+            Vec::new()
+        }
+    }
+}
+
+type PostNote = Action<(AuthStore, Note), ()>;
 
 #[component]
 pub fn NoteComponent() -> impl IntoView {
-    let auth = use_auth().unwrap();
-
     let list: RwSignal<BTreeMap<NoteId, RwSignal<NoteTitle>>> = RwSignal::new(BTreeMap::new());
     let active_note_id: RwSignal<Option<NoteId>> = RwSignal::new(None);
     let (is_init, set_is_init) = signal(true);
@@ -36,40 +43,43 @@ pub fn NoteComponent() -> impl IntoView {
     let check_title_validity = Trigger::new();
 
     let client: QueryClient = expect_context();
+    let note_list_resource = client.resource(fetch_note_list, || ());
     let note_resource = client.resource(fetch_note, move || active_note_id.get());
 
-    // Fetch note list on mount
-    spawn_local(async move {
-        let mut res = Vec::new();
+    {
+        spawn_local(async move {
+            let notes = note_list_resource.await;
+            let res = notes
+                .into_iter()
+                .map(|(note_id, note_title)| (note_id, RwSignal::new(note_title)))
+                .collect();
 
-        match auth.backend().get_untracked() {
-            Some(backend) => {
-                res = backend.fetch_note_list().await;
-            }
-            None => {
-                console_warn("Backend is not available");
-            }
-        }
+            list.set(res);
+            set_is_init.set(false);
+        });
+    }
 
-        let res = res
-            .into_iter()
-            .map(|note| {
-                let title = RwSignal::new(note.1.clone());
-                (note.0, title)
-            })
-            .collect();
-
-        list.set(res);
-        set_is_init.set(false);
-    });
-
-    let post_note = Action::new(|input: &(Store<AuthStore>, Note)| {
+    let post_note = Action::new(|input: &(AuthStore, Note)| {
         let (auth_store, note) = input.clone();
+        let note_id = note.id;
+        let client: QueryClient = expect_context();
+
         async move {
+            let cached_note = client.fetch_query(fetch_note, Some(note_id)).await;
+
+            if let Some(cached_note) = cached_note
+                && note == cached_note
+            {
+                return;
+            }
+
+            client.set_query(fetch_note, Some(note_id), Some(note.clone()));
+
             let backend = auth_store.backend();
             match backend.get_untracked() {
                 Some(backend) => {
                     backend.post_note(note).await;
+                    client.invalidate_query(fetch_note, Some(note_id));
                 }
                 None => console_warn("BackendActor is not available"),
             };
@@ -170,11 +180,9 @@ fn NoteList(
                                             if old_active_note_id != Some(id) {
                                                 active_note_id.set(Some(id));
 
-                                                if let Some(active_note_id) = old_active_note_id {
-                                                    if note_resource.get_untracked().is_some() {
-                                                        let active_note = inputs_to_note(active_note_id, title_input, content_input);
-                                                        post_note.dispatch((auth, active_note));
-                                                    }
+                                                if let Some(active_note_id) = old_active_note_id && note_resource.get_untracked().is_some() {
+                                                    let active_note = inputs_to_note(active_note_id, title_input, content_input);
+                                                    post_note.dispatch((auth, active_note));
                                                 }
 
                                                 title_input.get_untracked().unwrap().set_value(title.get_untracked().as_str());
@@ -226,7 +234,6 @@ fn NoteEditor(
     check_title_validity: Trigger,
 ) -> impl IntoView {
     let auth = use_auth().unwrap();
-    let client: QueryClient = expect_context();
 
     let readonly = move || note_resource.get().is_none() || post_note.pending().get();
 

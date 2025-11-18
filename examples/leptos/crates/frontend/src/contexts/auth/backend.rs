@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use util::{
     canister_id::BACKEND,
-    dfx_network::{DFX_NETWORK, DfxNetwork},
+    dfx_network::{DFX_NETWORK, DfxNetwork, is_local_dfx},
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60 * 5);
@@ -35,7 +35,7 @@ impl BackendActor {
             .build()
             .expect("Failed to create agent");
 
-        if *DFX_NETWORK == DfxNetwork::Local {
+        if is_local_dfx() {
             agent.fetch_root_key().await.unwrap();
         }
 

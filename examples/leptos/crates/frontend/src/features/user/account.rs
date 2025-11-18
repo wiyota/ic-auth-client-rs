@@ -1,4 +1,4 @@
-use crate::contexts::auth::{use_auth, AuthStoreExt};
+use crate::contexts::auth::{AuthStoreExt, use_auth};
 use leptos::prelude::*;
 
 #[component]

@@ -1,10 +1,12 @@
 use ic_agent::{Identity, export::Principal};
-use ic_auth_client::{AuthClient, AuthClientCreateOptions, AuthClientLoginOptions, IdleOptions};
+use ic_auth_client::{
+    AuthClient, AuthClientCreateOptions, AuthClientLoginOptions, IdleOptions,
+    idle_manager::IdleManagerOptions,
+};
 use leptos::{
     leptos_dom::logging::{console_log, console_warn},
     prelude::*,
     task::spawn_local,
-    web_sys::Url,
 };
 use reactive_stores::Store;
 use std::sync::Arc;
@@ -16,9 +18,11 @@ use util::{
 mod backend;
 pub use backend::BackendActor;
 
+pub type AuthStore = Store<Auth>;
+
 #[allow(dead_code)]
 #[derive(Clone, Store)]
-pub struct AuthStore {
+pub struct Auth {
     is_authenticated: bool,
     is_initialized: bool,
     auth_client: Option<AuthClient>,
@@ -27,9 +31,9 @@ pub struct AuthStore {
     backend: Option<BackendActor>,
 }
 
-impl AuthStore {
-    pub fn create(options: AuthClientCreateOptions) -> Store<AuthStore> {
-        let store = Store::new(AuthStore {
+impl Auth {
+    pub fn create_store(options: AuthClientCreateOptions) -> AuthStore {
+        let store = Store::new(Auth {
             is_authenticated: false,
             is_initialized: false,
             auth_client: None,
@@ -42,19 +46,19 @@ impl AuthStore {
             let client = AuthClient::new_with_options(options)
                 .await
                 .expect("Failed to create AuthClient");
-            AuthStore::update_with_client(store, client);
+            Auth::update_with_client(store, client);
         });
 
         store
     }
 
-    fn update_with_client(store: Store<AuthStore>, client: AuthClient) {
+    fn update_with_client(store: AuthStore, client: AuthClient) {
         let is_authenticated = client.is_authenticated();
         let identity = client.identity();
         let principal = client.principal().ok();
 
         spawn_local(async move {
-            store.set(AuthStore {
+            store.set(Auth {
                 is_authenticated,
                 is_initialized: true,
                 auth_client: Some(client),
@@ -65,13 +69,13 @@ impl AuthStore {
         });
     }
 
-    pub fn login(store: Store<AuthStore>) {
+    pub fn login(store: AuthStore) {
         if let Some(client) = store.auth_client().get() {
-            let mut client_clone = client.clone();
+            let client_clone = client.clone();
             let on_success = move |_| {
                 console_log("Logged in successfully");
                 if let Some(updated_client) = store.auth_client().get_untracked() {
-                    AuthStore::update_with_client(store, updated_client);
+                    Auth::update_with_client(store, updated_client);
                 }
             };
 
@@ -83,31 +87,34 @@ impl AuthStore {
                 }
             };
 
-            let options = match identity_provider() {
-                Some(provider) => AuthClientLoginOptions::builder().identity_provider(provider),
-                None => AuthClientLoginOptions::builder(),
-            };
+            let options = AuthClientLoginOptions::builder()
+                .on_success(on_success)
+                .on_error(on_error);
 
-            let options = options.on_success(on_success).on_error(on_error).build();
+            let options = match identity_provider() {
+                Some(provider) => options.identity_provider(provider).build(),
+                None => options.build(),
+            };
 
             client_clone.login_with_options(options); // Use the cloned client
         }
     }
 
-    pub fn logout(store: Store<AuthStore>) {
+    pub fn logout(store: AuthStore) {
         if let Some(client) = store.auth_client().get() {
-            let mut client_clone = client.clone();
+            let client_clone = client.clone();
             spawn_local(async move {
                 client_clone.logout(None).await;
                 if let Some(updated_client) = store.auth_client().get_untracked() {
-                    AuthStore::update_with_client(store, updated_client);
+                    console_log("Logged off successfully");
+                    Auth::update_with_client(store, updated_client);
                 }
             });
         }
     }
 }
 
-fn identity_provider() -> Option<Url> {
+fn identity_provider() -> Option<String> {
     // Check if we're in a browser context
     if let Some(window) = web_sys::window() {
         // Check if the network is local
@@ -121,17 +128,12 @@ fn identity_provider() -> Option<Url> {
                 && !user_agent.contains("android");
 
             if is_local && is_safari {
-                return Some(
-                    Url::new(&format!(
-                        "http://localhost:4943/?canisterId={}",
-                        *INTERNET_IDENTITY
-                    ))
-                    .unwrap(),
-                );
+                return Some(format!(
+                    "http://localhost:4943/?canisterId={}",
+                    *INTERNET_IDENTITY
+                ));
             } else if is_local {
-                return Some(
-                    Url::new(&format!("http://{}.localhost:4943", *INTERNET_IDENTITY)).unwrap(),
-                );
+                return Some(format!("http://{}.localhost:4943", *INTERNET_IDENTITY));
             }
         }
     }
@@ -141,38 +143,43 @@ fn identity_provider() -> Option<Url> {
 
 #[component]
 pub fn AuthProvider(children: Children) -> impl IntoView {
-    let auth = AuthStore::create(AuthClientCreateOptions {
-        idle_options: Some(
-            IdleOptions::builder()
-                .idle_timeout(5 * 1000) // 5 seconds
-                .on_idle(|| console_log("User is idle"))
-                .build(),
-        ),
-        ..Default::default()
-    });
+    let auth_store = Auth::create_store(
+        AuthClientCreateOptions::builder()
+            .idle_options(
+                IdleOptions::builder()
+                    .idle_manager_options(
+                        IdleManagerOptions::builder()
+                            .idle_timeout(5 * 1000) // 5 seconds
+                            .on_idle(|| console_log("User is idle"))
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build(),
+    );
 
-    provide_context(auth);
+    provide_context(auth_store);
 
     children()
 }
 
-/// Hook to access the AuthStore context.
-pub fn use_auth() -> Result<Store<AuthStore>, String> {
-    use_context::<Store<AuthStore>>().ok_or("Out of the AuthStore context".to_string())
+/// Hook to access the Auth context.
+pub fn use_auth() -> Result<AuthStore, String> {
+    use_context::<AuthStore>().ok_or("Out of the Auth context".to_string())
 }
 
-/// Extension trait for AuthStore to provide a more ergonomic API
+/// Extension trait for Auth to provide a more ergonomic API
 pub trait AuthStoreExt {
     fn login(self);
     fn logout(self);
 }
 
-impl AuthStoreExt for Store<AuthStore> {
+impl AuthStoreExt for AuthStore {
     fn login(self) {
-        AuthStore::login(self);
+        Auth::login(self);
     }
 
     fn logout(self) {
-        AuthStore::logout(self);
+        Auth::logout(self);
     }
 }

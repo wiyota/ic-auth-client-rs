@@ -16,9 +16,9 @@ codegen-units = 1
 candid.workspace = true
 ciborium = "0.2.2"
 domain = { workspace = true, features = ["entity", "ic-stable"] }
-ic-cdk = "0.18.7"
-ic-cdk-macros = "0.18.7"
+ic-cdk = "0.19"
+ic-cdk-macros = "0.19"
 ic-stable-structures.workspace = true
 no-panic = "0.1"
-rkyv = "0.8.11"
+rkyv = "0.8"
 serde.workspace = true

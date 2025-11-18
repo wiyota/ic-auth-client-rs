@@ -1,5 +1,5 @@
 use crate::{
-    contexts::auth::{AuthStoreStoreFields, use_auth},
+    contexts::auth::{AuthStoreFields, use_auth},
     features::{
         note::component::NoteComponent,
         user::account::{LoginButton, LogoutButton},

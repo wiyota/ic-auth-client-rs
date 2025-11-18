@@ -35,11 +35,11 @@ ic-agent = { version = "0.44", default-features = false, features = [
     "wasm-bindgen",
 ] }
 ic-auth-client = { path = "../../../../", features = ["tracing"] }
-leptos = { version = "0.8.8", features = ["csr"] }
-leptos-fetch = "0.4.5"
+leptos = { version = "0.8.12", features = ["csr"] }
+leptos-fetch = "0.4.7"
 leptos_meta = "0.8.5"
-leptos_router = "0.8.6"
-reactive_stores = "0.2.5"
+leptos_router = "0.8.9"
+reactive_stores = "0.3"
 serde.workspace = true
 tracing-wasm = "0.2.1"
 util.workspace = true

@@ -19,3 +19,8 @@ impl DfxNetwork {
         }
     }
 }
+
+/// Returns true if the current DFX_NETWORK is Local.
+pub fn is_local_dfx() -> bool {
+    *DFX_NETWORK == DfxNetwork::Local
+}
