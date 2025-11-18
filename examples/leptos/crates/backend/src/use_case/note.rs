@@ -1,7 +1,7 @@
 use domain::note::{
+    entity::model::Note,
     repository::NoteRepository,
     service::{NoteService, NoteServiceError},
-    entity::model::Note,
     NoteId, NoteTitle,
 };
 
@@ -11,7 +11,9 @@ pub struct NoteUseCase<R: NoteRepository> {
 
 impl<R: NoteRepository> NoteUseCase<R> {
     pub fn new(repository: R) -> Self {
-        Self { service: NoteService::new(repository) }
+        Self {
+            service: NoteService::new(repository),
+        }
     }
 
     pub fn get(&self, id: &NoteId) -> Option<Note> {

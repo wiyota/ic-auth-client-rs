@@ -37,8 +37,8 @@ pub fn NoteComponent() -> impl IntoView {
     let active_note_id: RwSignal<Option<NoteId>> = RwSignal::new(None);
     let (is_init, set_is_init) = signal(true);
 
-    let title_input = NodeRef::<Input>::new();
-    let content_input = NodeRef::<Textarea>::new();
+    let inputs = NoteInputs::new(NodeRef::<Input>::new(), NodeRef::<Textarea>::new());
+    let auth = use_auth().unwrap();
 
     let check_title_validity = Trigger::new();
 
@@ -88,25 +88,41 @@ pub fn NoteComponent() -> impl IntoView {
 
     view! {
         <article class="rounded-box flex border border-stone-300 dark:border-stone-600 w-full h-full">
-            <NoteList list active_note_id note_resource post_note title_input content_input is_init check_title_validity />
-            <NoteEditor list active_note_id note_resource post_note title_input content_input is_init check_title_validity />
+            <NoteList
+                auth
+                list
+                active_note_id
+                note_resource
+                post_note
+                inputs
+                is_init
+                check_title_validity
+            />
+            <NoteEditor
+                auth
+                list
+                active_note_id
+                note_resource
+                post_note
+                inputs
+                is_init
+                check_title_validity
+            />
         </article>
     }
 }
 
 #[component]
 fn NoteList(
+    auth: AuthStore,
     list: RwSignal<BTreeMap<NoteId, RwSignal<NoteTitle>>>,
     active_note_id: RwSignal<Option<NoteId>>,
     note_resource: Resource<Option<Note>>,
     post_note: PostNote,
-    title_input: NodeRef<Input>,
-    content_input: NodeRef<Textarea>,
+    inputs: NoteInputs,
     is_init: ReadSignal<bool>,
     check_title_validity: Trigger,
 ) -> impl IntoView {
-    let auth = use_auth().unwrap();
-
     let button_class = move || {
         format!(
             "btn btn-sm py-[0.125rem] px-4 mb-2 w-full {}",
@@ -128,16 +144,11 @@ fn NoteList(
                     create_new_note(list, active_note_id);
 
                     if let Some(old_active_note_id) = old_active_note_id {
-                        let active_note = inputs_to_note(old_active_note_id, title_input, content_input);
-                        post_note.dispatch((auth, active_note));
+                        dispatch_note_from_inputs(&post_note, auth, &inputs, old_active_note_id);
                     }
 
-                    let title_node = title_input.get_untracked().unwrap();
-                    title_node.set_value("");
-                    title_input.get_untracked().unwrap().set_custom_validity("");
-                    check_title_validity.notify();
-                    content_input.get_untracked().unwrap().set_value("");
-                    title_node.focus().unwrap();
+                    inputs.clear_form(&check_title_validity);
+                    inputs.focus_title();
                 }
             >
                 "New Note"
@@ -160,59 +171,60 @@ fn NoteList(
                     <For
                         each=move || list.get()
                         key=|note| note.0
-                        children=move |(id, title)| {
-                            let is_active = move || {
-                                if let Some(active_note_id) = active_note_id.get() {
-                                    active_note_id == id
-                                } else {
-                                    false
-                                }
-                            };
+                        children={
+                            move |(id, title)| {
+                                let is_active = move || {
+                                    if let Some(active_note_id) = active_note_id.get() {
+                                        active_note_id == id
+                                    } else {
+                                        false
+                                    }
+                                };
 
-                            view! {
-                                <li>
-                                    <button
+                                view! {
+                                    <li>
+                                        <button
                                         class="px-2 w-full text-sm text-left rounded py-[0.125rem] text-stone-700 truncate dark:text-stone-400 dark:hover:bg-stone-800 dark:active:bg-stone-900 hover:bg-stone-200 active:bg-stone-300"
                                         class:bg-stone-200=is_active
                                         class:dark:bg-stone-800=is_active
-                                        on:click=move |_| {
-                                            let old_active_note_id = active_note_id.get_untracked();
-                                            if old_active_note_id != Some(id) {
-                                                active_note_id.set(Some(id));
+                                            on:click={
+                                                move |_| {
+                                                    let old_active_note_id = active_note_id.get_untracked();
+                                                    if old_active_note_id != Some(id) {
+                                                        active_note_id.set(Some(id));
 
-                                                if let Some(active_note_id) = old_active_note_id && note_resource.get_untracked().is_some() {
-                                                    let active_note = inputs_to_note(active_note_id, title_input, content_input);
-                                                    post_note.dispatch((auth, active_note));
-                                                }
-
-                                                title_input.get_untracked().unwrap().set_value(title.get_untracked().as_str());
-                                                title_input.get_untracked().unwrap().set_custom_validity("");
-                                                check_title_validity.notify();
-
-                                                let content_node = content_input.get_untracked().unwrap();
-                                                content_node.set_value("");
-                                                content_node.focus().unwrap();
-                                            }
-                                        }
-                                    >
-                                        {
-                                            move || {
-                                                let title = title.get();
-                                                if title.is_empty() {
-                                                    Either::Left(
-                                                        view! {
-                                                            <span class="text-stone-400 dark:text-stone-600">"Untitled"</span>
+                                                        if let Some(active_note_id) = old_active_note_id && note_resource.get_untracked().is_some() {
+                                                            dispatch_note_from_inputs(&post_note, auth, &inputs, active_note_id);
                                                         }
-                                                    )
-                                                } else {
-                                                    Either::Right(
-                                                        title.to_string()
-                                                    )
+
+                                                        inputs.set_title_value(title.get_untracked().as_str());
+                                                        inputs.reset_title_validity(&check_title_validity);
+
+                                                        inputs.clear_content();
+                                                        inputs.focus_content();
+                                                    }
                                                 }
                                             }
-                                        }
-                                    </button>
-                                </li>
+                                        >
+                                            {
+                                                move || {
+                                                    let title = title.get();
+                                                    if title.is_empty() {
+                                                        Either::Left(
+                                                            view! {
+                                                                <span class="text-stone-400 dark:text-stone-600">"Untitled"</span>
+                                                            }
+                                                        )
+                                                    } else {
+                                                        Either::Right(
+                                                            title.to_string()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        </button>
+                                    </li>
+                                }
                             }
                         }
                     />
@@ -224,22 +236,21 @@ fn NoteList(
 
 #[component]
 fn NoteEditor(
+    auth: AuthStore,
     list: RwSignal<BTreeMap<NoteId, RwSignal<NoteTitle>>>,
     active_note_id: RwSignal<Option<NoteId>>,
     note_resource: Resource<Option<Note>>,
     post_note: PostNote,
-    title_input: NodeRef<Input>,
-    content_input: NodeRef<Textarea>,
+    inputs: NoteInputs,
     is_init: ReadSignal<bool>,
     check_title_validity: Trigger,
 ) -> impl IntoView {
-    let auth = use_auth().unwrap();
-
     let readonly = move || note_resource.get().is_none() || post_note.pending().get();
 
     let is_title_invalid = Memo::new(move |_| {
         check_title_validity.track();
-        title_input
+        inputs
+            .title_ref()
             .get_untracked()
             .is_some_and(|node| !node.check_validity())
     });
@@ -278,77 +289,83 @@ fn NoteEditor(
                             </p>
                         </div>}
                 }>
-                    {move || Suspend::new(async move {
-                        let note = note_resource.await;
+                    {
+                        move || {
+                            Suspend::new(async move {
+                                let note = note_resource.await;
 
-                        if let Some(note) = note {
-                            title_input
-                                .get()
-                                .unwrap()
-                                .set_value(note.title.to_string().as_str());
-                            content_input
-                                .get()
-                                .unwrap()
-                                .set_value(note.content.as_str());
-                        }
-
-                        view! {
-                            <form
-                                method="POST"
-                                class="flex-col gap-2 w-full h-full flex"
-                                on:submit=move |ev| {
-                                    ev.prevent_default();
-                                    if note_resource.get_untracked().is_some() {
-                                        let active_note = inputs_to_note(active_note_id.get_untracked().unwrap(), title_input, content_input);
-                                        post_note.dispatch((auth, active_note));
-                                    }
+                                if let Some(note) = note {
+                                    inputs.populate_from_note(&note);
                                 }
-                            >
-                                <div class="flex items-center gap-2 p-2 border-b border-stone-300 dark:border-stone-600">
-                                    <input
-                                        class="p-2 w-full bg-transparent rounded outline-0 outline-red-500"
-                                        style:outline-width=move || if is_title_invalid.get() { "2px" } else { "0" }
-                                        node_ref=title_input
-                                        type="text"
-                                        readonly=readonly
-                                        placeholder="Untitled"
-                                        on:input=move |ev| {
-                                            let input_value = event_target_value(&ev);
-                                            let mut title = NoteTitle::new(input_value.clone());
-                                            if title.is_ok() {
-                                                title_input.get_untracked().unwrap().set_custom_validity("");
-                                            } else {
-                                                title_input.get_untracked().unwrap().set_custom_validity("Title is too long");
-                                                title = NoteTitle::new(input_value.chars().take(50).collect::<String>());
-                                            }
-                                            list.update(|list| {
-                                                if let Some(id) = active_note_id.get_untracked() && let Some(title_signal) = list.get_mut(&id) {
-                                                    title_signal.set(title.unwrap());
+
+                                view! {
+                                    <form
+                                        method="POST"
+                                        class="flex-col gap-2 w-full h-full flex"
+                                        on:submit={
+                                            move |ev| {
+                                                ev.prevent_default();
+                                                if note_resource.get_untracked().is_some() && let Some(active_note_id) = active_note_id.get_untracked() {
+                                                    dispatch_note_from_inputs(&post_note, auth, &inputs, active_note_id);
                                                 }
-                                            });
-                                            check_title_validity.notify();
+                                            }
                                         }
-                                    />
-                                    <div
-                                        class="absolute px-2 ml-1 bg-red-500 rounded py-[0.125rem] mt-[-0.9rem]"
-                                        style:display=move || if is_title_invalid.get() { "block" } else { "none" }
                                     >
-                                        <p class="text-xs text-stone-100">"Title is up to 50 characters long"</p>
-                                    </div>
-                                    <input
-                                        class=submit_class
-                                        type="submit"
-                                        disabled=readonly
-                                        value="Save"
-                                    />
-                                </div>
-                                <textarea
-                                    node_ref=content_input
-                                    readonly=readonly
-                                    class="flex-grow py-2 px-4 w-full bg-transparent rounded resize-none outline-0"
-                                ></textarea>
-                            </form>}
-                    })}
+                                        <div class="flex items-center gap-2 p-2 border-b border-stone-300 dark:border-stone-600">
+                                            <input
+                                                class="p-2 w-full bg-transparent rounded outline-0 outline-red-500"
+                                                style:outline-width=move || if is_title_invalid.get() { "2px" } else { "0" }
+                                                node_ref=inputs.title_ref()
+                                                type="text"
+                                                readonly=readonly
+                                                placeholder="Untitled"
+                                                on:input={
+                                                    move |ev| {
+                                                        let input_value = event_target_value(&ev);
+                                                        let title = match NoteTitle::new(input_value.clone()) {
+                                                            Ok(title) => {
+                                                                inputs.reset_title_validity(&check_title_validity);
+                                                                title
+                                                            }
+                                                            Err(_) => {
+                                                                inputs.set_title_error("Title is too long", &check_title_validity);
+                                                                NoteTitle::new(
+                                                                    input_value.chars().take(50).collect::<String>(),
+                                                                )
+                                                                .expect("Title truncated to 50 chars should be valid")
+                                                            }
+                                                        };
+                                                        list.update(|list| {
+                                                            if let Some(id) = active_note_id.get_untracked() && let Some(title_signal) = list.get_mut(&id) {
+                                                                title_signal.set(title);
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                            />
+                                            <div
+                                                class="absolute px-2 ml-1 bg-red-500 rounded py-[0.125rem] mt-[-0.9rem]"
+                                                style:display=move || if is_title_invalid.get() { "block" } else { "none" }
+                                            >
+                                                <p class="text-xs text-stone-100">"Title is up to 50 characters long"</p>
+                                            </div>
+                                            <input
+                                                class=submit_class
+                                                type="submit"
+                                                disabled=readonly
+                                                value="Save"
+                                            />
+                                        </div>
+                                        <textarea
+                                            node_ref=inputs.content_ref()
+                                            readonly=readonly
+                                            class="flex-grow py-2 px-4 w-full bg-transparent rounded resize-none outline-0"
+                                        ></textarea>
+                                    </form>
+                                }
+                            })
+                        }
+                    }
             </Transition>
         </div>
     }
@@ -373,18 +390,97 @@ fn create_new_note(
     active_note_id.set(Some(new_note_id));
 }
 
-fn inputs_to_note(
+fn dispatch_note_from_inputs(
+    post_note: &PostNote,
+    auth: AuthStore,
+    inputs: &NoteInputs,
     note_id: NoteId,
-    title_input: NodeRef<Input>,
-    content_input: NodeRef<Textarea>,
-) -> Note {
-    let title = title_input.get().unwrap().value().trim().to_string();
-    let len = title.chars().count().min(50);
-    let title = title.chars().take(len).collect::<String>();
+) {
+    let note = inputs.note_from_inputs(note_id);
+    post_note.dispatch((auth, note));
+}
 
-    Note {
-        id: note_id,
-        title: NoteTitle::new(title).unwrap(),
-        content: content_input.get().unwrap().value().trim().to_string(),
+#[derive(Clone, Copy)]
+struct NoteInputs {
+    title: NodeRef<Input>,
+    content: NodeRef<Textarea>,
+}
+
+impl NoteInputs {
+    fn new(title: NodeRef<Input>, content: NodeRef<Textarea>) -> Self {
+        Self { title, content }
+    }
+
+    fn title_ref(&self) -> NodeRef<Input> {
+        self.title
+    }
+
+    fn content_ref(&self) -> NodeRef<Textarea> {
+        self.content
+    }
+
+    fn set_title_value(&self, value: &str) {
+        if let Some(node) = self.title.get_untracked() {
+            node.set_value(value);
+        }
+    }
+
+    fn set_content_value(&self, value: &str) {
+        if let Some(node) = self.content.get_untracked() {
+            node.set_value(value);
+        }
+    }
+
+    fn clear_content(&self) {
+        self.set_content_value("");
+    }
+
+    fn reset_title_validity(&self, trigger: &Trigger) {
+        if let Some(node) = self.title.get_untracked() {
+            node.set_custom_validity("");
+        }
+        trigger.notify();
+    }
+
+    fn set_title_error(&self, message: &str, trigger: &Trigger) {
+        if let Some(node) = self.title.get_untracked() {
+            node.set_custom_validity(message);
+        }
+        trigger.notify();
+    }
+
+    fn clear_form(&self, trigger: &Trigger) {
+        self.set_title_value("");
+        self.reset_title_validity(trigger);
+        self.clear_content();
+    }
+
+    fn focus_title(&self) {
+        if let Some(node) = self.title.get_untracked() {
+            let _ = node.focus();
+        }
+    }
+
+    fn focus_content(&self) {
+        if let Some(node) = self.content.get_untracked() {
+            let _ = node.focus();
+        }
+    }
+
+    fn populate_from_note(&self, note: &Note) {
+        self.set_title_value(note.title.as_str());
+        self.set_content_value(note.content.as_str());
+    }
+
+    fn note_from_inputs(&self, note_id: NoteId) -> Note {
+        let title = self.title.get().unwrap().value().trim().to_string();
+        let len = title.chars().count().min(50);
+        let title = title.chars().take(len).collect::<String>();
+
+        Note {
+            id: note_id,
+            title: NoteTitle::new(title).unwrap(),
+            content: self.content.get().unwrap().value().trim().to_string(),
+        }
     }
 }

@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::{
+    components::{FlatRoutes, Route, Router},
     path,
-    components::{Route, Router, FlatRoutes}
 };
 
 pub mod index;

@@ -1,4 +1,7 @@
-use super::{super::{NoteId, NoteTitle}, dao::{NoteDao, NoteDaoVersion, V1}};
+use super::{
+    super::{NoteId, NoteTitle},
+    dao::{NoteDao, NoteDaoVersion, V1},
+};
 
 #[derive(Debug, Hash, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Note {

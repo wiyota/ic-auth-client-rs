@@ -15,7 +15,5 @@ pub fn post_upgrade() {
 
     // Deserialize and set the state.
     let state = ciborium::de::from_reader(&*state_bytes).expect("failed to decode state");
-    STATE.with(|s| {
-        *s.borrow_mut() = state
-    });
+    STATE.with(|s| *s.borrow_mut() = state);
 }

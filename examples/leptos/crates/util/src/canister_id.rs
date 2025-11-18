@@ -6,8 +6,7 @@ use std::env;
 pub static BACKEND: Lazy<Principal> = Lazy::new(|| {
     let mut canister_id = dotenv!("CANISTER_ID_BACKEND").to_string();
     if canister_id.is_empty() {
-        canister_id = env::var("CANISTER_ID_BACKEND")
-            .expect("CANISTER_ID_BACKEND is must be set");
+        canister_id = env::var("CANISTER_ID_BACKEND").expect("CANISTER_ID_BACKEND is must be set");
     }
 
     parce_principal(canister_id)

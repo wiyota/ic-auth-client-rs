@@ -1,8 +1,4 @@
-use super::{
-    entity::model::Note,
-    repository::NoteRepository,
-    NoteId, NoteTitle,
-};
+use super::{entity::model::Note, repository::NoteRepository, NoteId, NoteTitle};
 
 pub struct NoteService<R: NoteRepository> {
     repository: R,

@@ -1,10 +1,13 @@
 use crate::log::Log;
 use candid::Principal;
-use domain::note::{NoteId, entity::dao::NoteDao};
+use domain::note::{entity::dao::NoteDao, NoteId};
 use ic_stable_structures::{StableBTreeMap, StableLog};
 use no_panic::no_panic;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 pub mod log;
 mod memory;
@@ -13,8 +16,8 @@ mod post_upgrade;
 mod pre_upgrade;
 
 use memory::*;
-use pre_upgrade::pre_upgrade as pre_upgrade_inner;
 use post_upgrade::post_upgrade as post_upgrade_inner;
+use pre_upgrade::pre_upgrade as pre_upgrade_inner;
 
 #[derive(Serialize, Deserialize)]
 struct State {

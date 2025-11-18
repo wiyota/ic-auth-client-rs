@@ -1,6 +1,6 @@
+use super::super::super::NoteTitle;
 use candid::CandidType;
 use serde::{Deserialize, Serialize};
-use super::super::super::NoteTitle;
 
 #[derive(CandidType, Clone, Serialize, Deserialize, Debug)]
 pub struct V1 {

@@ -1,14 +1,11 @@
 use crate::{
-    controller::note::NoteController,
-    infrastructure::note::repository::StableNoteRepository,
+    controller::note::NoteController, infrastructure::note::repository::StableNoteRepository,
 };
 use domain::note::{entity::Note, NoteId, NoteTitle};
 use ic_cdk_macros::*;
 
 fn controller() -> NoteController<StableNoteRepository> {
-    NoteController::new(
-        StableNoteRepository::new(),
-    )
+    NoteController::new(StableNoteRepository::new())
 }
 
 #[query]

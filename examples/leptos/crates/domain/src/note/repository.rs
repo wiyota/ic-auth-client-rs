@@ -1,7 +1,4 @@
-use super::{
-    entity::model::Note,
-    NoteId, NoteTitle,
-};
+use super::{entity::model::Note, NoteId, NoteTitle};
 
 pub trait NoteRepository {
     fn get(&self, key: &NoteId) -> Option<Note>;

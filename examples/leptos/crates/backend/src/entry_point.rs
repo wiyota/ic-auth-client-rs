@@ -1,7 +1,4 @@
-use domain::note::{
-    entity::Note,
-    value_object::*,
-};
+use domain::note::{entity::Note, value_object::*};
 
 mod note;
 
