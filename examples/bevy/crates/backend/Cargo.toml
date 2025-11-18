@@ -1,0 +1,14 @@
+[package]
+publish = false
+name = "backend"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid.workspace = true
+ic-cdk = "0.19"
+ic-cdk-macros = "0.19"
+ic-stable-structures = "0.7"

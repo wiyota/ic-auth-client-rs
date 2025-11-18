@@ -1,0 +1,779 @@
+//! This example demonstrates how to use the `ic-auth-client` with the Bevy game engine.
+//! It features a simple UI that allows users to log in and log out, displaying their principal ID when authenticated.
+
+#![windows_subsystem = "windows"]
+
+mod auth;
+mod bricks;
+mod consts;
+
+use bevy::log::{Level, LogPlugin};
+use bevy::prelude::*;
+//use bevy::state::app::AppExtStates as _;
+
+use auth::{Auth, AuthState};
+use bricks::{Board, Brick, BrickShape, Dot};
+use consts::*;
+use keyring::set_default_credential_builder;
+use std::{env, time::Duration};
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
+enum GameState {
+    #[default]
+    Login,
+    Playing,
+    GameOver,
+}
+
+fn transition_to_playing(mut app_state: ResMut<NextState<GameState>>) {
+    app_state.set(GameState::Playing);
+}
+
+fn main() -> anyhow::Result<()> {
+    if util::dfx_network::is_local_dfx() {
+        set_default_credential_builder(keyring::mock::default_credential_builder());
+    }
+
+    let runtime = tokio::runtime::Runtime::new()?;
+    let _enter = runtime.enter();
+
+    let auth = Auth::new()?;
+    let initial_auth_state = auth.state.clone();
+
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "tetris".to_string(),
+                        resizable: false,
+                        resolution: (360, 443).into(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(LogPlugin {
+                    filter: default_log_filter(),
+                    level: Level::DEBUG,
+                    ..default()
+                }),
+        )
+        .insert_resource(GameData::default())
+        .insert_resource(initial_auth_state)
+        .insert_resource(auth)
+        .add_systems(PreStartup, setup_screen)
+        .init_state::<GameState>()
+        .add_systems(OnEnter(GameState::Login), setup_login_overlay)
+        .add_systems(
+            Update,
+            (login_button_system, login_status_text_system).run_if(in_state(GameState::Login)),
+        )
+        .add_systems(OnExit(GameState::Login), teardown_login_overlay)
+        .add_systems(Update, auth_state_sync_system)
+        .add_systems(
+            Update,
+            transition_to_playing.run_if(in_state(GameState::Login).and(
+                resource_exists::<AuthState>.and(not(resource_equals(AuthState::Unauthenticated))),
+            )),
+        )
+        .add_systems(OnEnter(GameState::Playing), newgame_system)
+        .add_systems(
+            Update,
+            (
+                keyboard_system,
+                movebrick_systrem,
+                freezebrick_system,
+                scoreboard_system,
+            )
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(OnEnter(GameState::GameOver), gameover_setup)
+        .add_systems(
+            Update,
+            gameover_system.run_if(in_state(GameState::GameOver)),
+        )
+        .run();
+
+    Ok(())
+}
+fn default_log_filter() -> String {
+    env::var("RUST_LOG").unwrap_or_else(|_| {
+        "info,wgpu=error,naga=warn,frontend=debug,ic_auth_client=trace,ic_agent=trace".to_string()
+    })
+}
+
+fn setup_screen(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn(Camera2d);
+
+    commands.spawn(Sprite {
+        image: asset_server.load("screen.png"),
+        ..default()
+    });
+    commands
+        .spawn(init_text(
+            "000000",
+            TEXT_SCORE_X,
+            TEXT_SCORE_Y,
+            &asset_server,
+        ))
+        .insert(ScoreText);
+    commands
+        .spawn(init_text(
+            "000000",
+            TEXT_LINES_X,
+            TEXT_LINES_Y,
+            &asset_server,
+        ))
+        .insert(LinesText);
+    commands
+        .spawn(init_text("00", TEXT_LEVEL_X, TEXT_LEVEL_Y, &asset_server))
+        .insert(LevelText);
+}
+
+#[derive(Component)]
+struct BoardBundle;
+
+#[derive(Component)]
+struct BrickBoardBundle;
+
+#[derive(Component)]
+struct BrickNextBundle;
+
+#[derive(Component)]
+struct ScoreText;
+
+#[derive(Component)]
+struct LinesText;
+
+#[derive(Component)]
+struct LevelText;
+
+#[derive(Component)]
+struct LoginText;
+
+#[derive(Component)]
+struct LoginUiRoot;
+
+#[derive(Component)]
+struct LoginButton;
+
+#[derive(Component)]
+struct GameOverText;
+
+fn setup_login_overlay(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    auth_state: Res<AuthState>,
+) {
+    let font = asset_server.load("digital7mono.ttf");
+    let status_message = login_status_message(&auth_state);
+
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            LoginUiRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: Val::Px(320.0),
+                    padding: UiRect::axes(Val::Px(24.0), Val::Px(24.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(16.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text("INTERNET IDENTITY".to_string()),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 28.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                ));
+
+                panel.spawn((
+                    Text(status_message),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    LoginText,
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                ));
+
+                panel
+                    .spawn((
+                        Button,
+                        LoginButton,
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(48.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb_u8(58, 116, 248)),
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text("IIでログイン".to_string()),
+                            TextFont {
+                                font: font.clone(),
+                                font_size: 22.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                panel.spawn((
+                    Text("ログイン後にゲームが開始されます".to_string()),
+                    TextFont {
+                        font,
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb_u8(160, 160, 160)),
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                ));
+            });
+        });
+}
+
+fn teardown_login_overlay(
+    mut commands: Commands,
+    query: Query<Entity, With<LoginUiRoot>>,
+    children: Query<&Children>,
+) {
+    for entity in &query {
+        despawn_login_node(entity, &mut commands, &children);
+    }
+}
+
+fn despawn_login_node(entity: Entity, commands: &mut Commands, children_query: &Query<&Children>) {
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            despawn_login_node(child, commands, children_query);
+        }
+    }
+    commands.entity(entity).despawn();
+}
+
+type LoginButtonQueryFilter = (Changed<Interaction>, With<LoginButton>);
+
+fn login_button_system(
+    mut query: Query<(&Interaction, &mut BackgroundColor), LoginButtonQueryFilter>,
+    auth: Res<Auth>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(Color::srgb_u8(44, 96, 220));
+                if let Err(err) = auth.login() {
+                    error!("Failed to start Internet Identity login: {err:?}");
+                }
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(Color::srgb_u8(82, 140, 255));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(Color::srgb_u8(58, 116, 248));
+            }
+        }
+    }
+}
+
+fn login_status_text_system(
+    auth_state: Res<AuthState>,
+    mut writer: TextUiWriter,
+    query: Query<Entity, With<LoginText>>,
+) {
+    if !auth_state.is_changed() {
+        return;
+    }
+    if let Ok(entity) = query.single() {
+        *writer.text(entity, 0) = login_status_message(&auth_state);
+    }
+}
+
+fn auth_state_sync_system(mut auth: ResMut<Auth>, mut auth_state: ResMut<AuthState>) {
+    auth.update_state_signal();
+    if *auth_state != auth.state {
+        *auth_state = auth.state.clone();
+    }
+}
+
+fn login_status_message(state: &AuthState) -> String {
+    match state {
+        AuthState::Unauthenticated => "Internet Identityでログインしてください".to_string(),
+        AuthState::Authenticated(principal) => format!("Principal: {}", principal),
+    }
+}
+
+/// keyboard_system only handle keyboard input
+/// dont handle tick-tick falling
+fn keyboard_system(
+    mut commands: Commands,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut game: ResMut<GameData>,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut Transform), With<BrickBoardBundle>>,
+) {
+    let ticked = game.keyboard_timer.tick(time.delta()).is_finished();
+    if ticked && let Ok((moving_entity, mut transform)) = query.single_mut() {
+        if keyboard_input.pressed(KeyCode::ArrowLeft)
+            && game
+                .board
+                .valid_brickshape(&game.moving_brick, &game.moving_orig.left())
+        {
+            game.moving_orig.move_left();
+            transform.translation.x -= consts::DOT_WIDTH_PX;
+        }
+
+        if keyboard_input.pressed(KeyCode::ArrowRight)
+            && game
+                .board
+                .valid_brickshape(&game.moving_brick, &game.moving_orig.right())
+        {
+            game.moving_orig.move_right();
+            transform.translation.x += consts::DOT_WIDTH_PX;
+        }
+
+        if keyboard_input.pressed(KeyCode::ArrowUp) {
+            let rotated = game.moving_brick.rotate();
+            if game.board.valid_brickshape(&rotated, &game.moving_orig) {
+                spawn_brick_board(&mut commands, rotated.into(), game.moving_orig);
+                game.moving_brick = rotated;
+                commands.entity(moving_entity).despawn();
+            }
+        }
+        if keyboard_input.pressed(KeyCode::Space) {
+            while game
+                .board
+                .valid_brickshape(&game.moving_brick, &game.moving_orig.down())
+            {
+                game.moving_orig.move_down();
+                transform.translation.y -= consts::DOT_WIDTH_PX;
+            }
+        }
+    }
+}
+
+/// movebrick_systrem only handle tick-tick falling
+/// dont handle keyboard input
+fn movebrick_systrem(
+    //commands: Commands,
+    mut game: ResMut<GameData>,
+    time: Res<Time>,
+    mut query: Query<&mut Transform, With<BrickBoardBundle>>,
+) {
+    let ticked = game.falling_timer.tick(time.delta()).is_finished();
+    if ticked && let Ok(mut transform) = query.single_mut() {
+        if game
+            .board
+            .valid_brickshape(&game.moving_brick, &game.moving_orig.down())
+        {
+            //after ticking, brick falling one line.
+            game.moving_orig.move_down();
+            transform.translation.y -= consts::DOT_WIDTH_PX;
+        } else {
+            //there is no space to falling, so freeze the brick.
+            let frozon_brick = game.moving_brick;
+            let frozon_orig = game.moving_orig;
+            game.board.occupy_brickshape(&frozon_brick, &frozon_orig);
+            game.freeze = true;
+            //if we destory moving brick here.
+            //there is flash, when destory brick ,and re-draw board.
+            //commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn freezebrick_system(
+    mut commands: Commands,
+    mut game: ResMut<GameData>,
+    mut brick: Query<Entity, With<BrickBoardBundle>>,
+    mut board: Query<Entity, With<BoardBundle>>,
+) {
+    if game.freeze {
+        //step 1. check: we can clean one line?
+        game.deleted_lines = game.board.clean_lines();
+
+        //destory moving brick
+        if let Ok(entity) = brick.single_mut() {
+            commands.entity(entity).despawn();
+        }
+        //destory board
+        if let Ok(entity) = board.single_mut() {
+            commands.entity(entity).despawn();
+        }
+        //redraw board
+        spawn_board(&mut commands, &game.board);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn scoreboard_system(
+    mut commands: Commands,
+    mut state: ResMut<NextState<GameState>>,
+    mut game: ResMut<GameData>,
+    mut next_brick: Query<Entity, With<BrickNextBundle>>,
+    mut writer: TextUiWriter,
+    mut query: ParamSet<(
+        Query<Entity, With<ScoreText>>,
+        Query<Entity, With<LinesText>>,
+        Query<Entity, With<LevelText>>,
+    )>,
+) {
+    if game.deleted_lines > 0 {
+        game.score += get_score(game.level, game.deleted_lines);
+        game.lines += game.deleted_lines;
+        game.deleted_lines = 0;
+
+        let level = get_level(game.lines);
+        if game.level != level {
+            game.level = level;
+            game.falling_timer
+                .set_duration(Duration::from_secs_f32(get_speed(level)));
+        }
+        if let Ok(text) = query.p0().single() {
+            //text.sections[0].value = format!("{:06}", game.score);
+            *writer.text(text, 0) = format!("{:06}", game.score);
+        }
+        if let Ok(text) = query.p1().single() {
+            //text.sections[0].value = format!("{:06}", game.lines);
+            *writer.text(text, 0) = format!("{:06}", game.lines);
+        }
+        if let Ok(text) = query.p2().single() {
+            //text.sections[0].value = format!("{:02}", game.level);
+            *writer.text(text, 0) = format!("{:02}", game.level);
+        }
+    }
+
+    //next moving brick
+    //step 1. generate new brick(using next_brick, and rand generate new next_brick)
+    //game.freeze = false;
+    if game.freeze {
+        game.freeze = false;
+        game.score += SCORE_PER_DROP;
+        if let Ok(text) = query.p0().single_mut() {
+            //text.sections[0].value = format!("{:06}", game.score);
+            *writer.text(text, 0) = format!("{:06}", game.score);
+        }
+
+        game.moving_orig = consts::BRICK_START_DOT;
+        game.moving_brick = game.next_brick;
+        game.next_brick = BrickShape::rand();
+
+        if game
+            .board
+            .valid_brickshape(&game.moving_brick, &BRICK_START_DOT)
+        {
+            //step 2.2 destory next_brick
+            if let Ok(entity) = next_brick.single_mut() {
+                commands.entity(entity).despawn();
+            }
+
+            //step 3.1 draw new one in start point
+            spawn_brick_board(
+                &mut commands,
+                game.moving_brick.into(),
+                consts::BRICK_START_DOT,
+            );
+            //step 3.3 draw new next_brick
+            spawn_brick_next(&mut commands, game.next_brick.into());
+        } else {
+            //game over!
+            //let _ = state.set(GameState::GameOver);
+            state.set(GameState::GameOver);
+        }
+    }
+}
+
+fn gameover_setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut board: Query<Entity, With<BoardBundle>>,
+    mut next_brick: Query<Entity, With<BrickNextBundle>>,
+) {
+    //destory board
+    if let Ok(entity) = board.single_mut() {
+        commands.entity(entity).despawn();
+    }
+    //destory next brick
+    if let Ok(entity) = next_brick.single_mut() {
+        commands.entity(entity).despawn();
+    }
+    //show GameOver
+    commands
+        .spawn(init_text(
+            STRING_GAME_OVER,
+            TEXT_GAME_X,
+            TEXT_GAME_Y,
+            &asset_server,
+        ))
+        .insert(GameOverText);
+}
+
+fn gameover_system(
+    mut commands: Commands,
+    mut state: ResMut<NextState<GameState>>,
+    mut game: ResMut<GameData>,
+    mut gameover: Query<Entity, With<GameOverText>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+) {
+    if keyboard_input.pressed(KeyCode::Space) {
+        game.reset();
+
+        if let Ok(entity) = gameover.single_mut() {
+            commands.entity(entity).despawn();
+        }
+        //let _ = state.set(GameState::Playing);
+        state.set(GameState::Playing);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn newgame_system(
+    mut commands: Commands,
+    game: ResMut<GameData>,
+    mut writer: TextUiWriter,
+    mut query: ParamSet<(
+        Query<Entity, With<ScoreText>>,
+        Query<Entity, With<LinesText>>,
+        Query<Entity, With<LevelText>>,
+    )>,
+) {
+    let moving_brick = game.moving_brick;
+    let next_brick = game.next_brick;
+    spawn_brick_board(&mut commands, moving_brick.into(), BRICK_START_DOT);
+    spawn_brick_next(&mut commands, next_brick.into());
+
+    if let Ok(text) = query.p0().single_mut() {
+        //text.sections[0].value = format!("{:06}", game.score);
+        *writer.text(text, 0) = format!("{:06}", game.score);
+    }
+    if let Ok(text) = query.p1().single_mut() {
+        //text.sections[0].value = format!("{:06}", game.lines);
+        *writer.text(text, 0) = format!("{:06}", game.lines);
+    }
+    if let Ok(text) = query.p2().single_mut() {
+        //text.sections[0].value = format!("{:02}", game.level);
+        *writer.text(text, 0) = format!("{:02}", game.level);
+    }
+}
+
+fn spawn_brick_next(commands: &mut Commands, brick: Brick) {
+    commands
+        .spawn((
+            Sprite {
+                color: Color::NONE,
+                ..default()
+            },
+            Transform::from_xyz(
+                consts::NEXT_BRICK_LEFT_PX - consts::WINDOWS_WIDTH / 2.0,
+                consts::NEXT_BRICK_BOTTOM_PX - consts::WINDOWS_HEIGHT / 2.0,
+                0.0, //zero,which one pixel behind the UI-screen png; cannot be seen in screen
+            ),
+        ))
+        .insert(BrickNextBundle)
+        .with_children(|parent| {
+            (0..4).for_each(|i| {
+                spawn_dot_as_child(parent, dot_to_vec2(&brick.dots[i]));
+            });
+        });
+}
+
+fn spawn_board(commands: &mut Commands, board: &Board) {
+    commands
+        .spawn((
+            Sprite {
+                color: Color::NONE,
+                ..default()
+            },
+            Transform::from_xyz(
+                10.0 - consts::WINDOWS_WIDTH / 2.0 + consts::BOARD_LEFT_PX,
+                10.0 - consts::WINDOWS_HEIGHT / 2.0 + consts::BOARD_BOTTOM_PX,
+                0.0, //zero,which one pixel behind the UI-screen png; cannot be seen in screen
+            ),
+        ))
+        .insert(BoardBundle)
+        .with_children(|parent| {
+            (0..consts::BOARD_X)
+                .flat_map(|a| (0..consts::BOARD_Y).map(move |b| Dot(a, b)))
+                .filter(|dot| board.occupied_dot(dot))
+                .for_each(|dot| spawn_dot_as_child(parent, dot_to_vec2(&dot)));
+        });
+}
+
+fn spawn_brick_board(commands: &mut Commands, brick: Brick, dot_in_board: Dot) {
+    commands
+        .spawn((
+            Sprite {
+                color: Color::NONE,
+                ..default()
+            },
+            Transform::from_xyz(
+                dot_in_board.0 as f32 * consts::DOT_WIDTH_PX + 10.0 - consts::WINDOWS_WIDTH / 2.0
+                    + consts::BOARD_LEFT_PX,
+                dot_in_board.1 as f32 * consts::DOT_WIDTH_PX + 10.0 - consts::WINDOWS_HEIGHT / 2.0
+                    + consts::BOARD_BOTTOM_PX,
+                0.0, //zero,which one pixel behind the UI-screen png; cannot be seen in screen
+            ),
+        ))
+        .insert(BrickBoardBundle)
+        .with_children(|parent| {
+            (0..4).for_each(|i| {
+                spawn_dot_as_child(parent, dot_to_vec2(&brick.dots[i]));
+            });
+        });
+}
+
+fn spawn_dot_as_child(commands: &mut ChildSpawnerCommands, trans: Vec2) {
+    commands
+        .spawn(sprit_bundle(20., Color::BLACK, trans))
+        .with_children(|parent| {
+            parent
+                .spawn(sprit_bundle(16., consts::BACKGROUND, Vec2::default()))
+                .with_children(|parent| {
+                    parent.spawn(sprit_bundle(12., Color::BLACK, Vec2::default()));
+                });
+        });
+}
+
+#[inline]
+fn sprit_bundle(width: f32, color: Color, trans: Vec2) -> impl Bundle {
+    (
+        Sprite {
+            color,
+            custom_size: Some(Vec2::new(width, width)),
+            ..default()
+        },
+        Transform {
+            translation: Vec3::new(trans.x, trans.y, 0.1),
+            ..default()
+        },
+    )
+}
+#[inline]
+fn init_text(msg: &str, x: f32, y: f32, asset_server: &Res<AssetServer>) -> impl Bundle {
+    (
+        Text(msg.to_string()),
+        TextFont {
+            // This font is loaded and will be used instead of the default font.
+            font: asset_server.load("digital7mono.ttf"),
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::BLACK),
+        Node {
+            align_self: AlignSelf::FlexEnd,
+            position_type: PositionType::Absolute,
+            left: Val::Px(x),
+            top: Val::Px(y),
+            ..default()
+        },
+    )
+}
+
+#[derive(Resource)]
+pub struct GameData {
+    board: Board,
+    moving_brick: BrickShape,
+    moving_orig: Dot,
+    next_brick: BrickShape,
+    freeze: bool,
+    deleted_lines: u32,
+    score: u32,
+    lines: u32,
+    level: u32,
+    keyboard_timer: Timer,
+    falling_timer: Timer,
+}
+
+impl GameData {
+    fn reset(&mut self) {
+        self.board.clear();
+        self.freeze = false;
+        self.deleted_lines = 0;
+        self.score = 0;
+        self.lines = 0;
+        self.level = 0;
+        self.keyboard_timer = Timer::from_seconds(consts::TIMER_KEY_SECS, TimerMode::Repeating);
+        self.falling_timer = Timer::from_seconds(consts::TIMER_FALLING_SECS, TimerMode::Repeating);
+    }
+}
+impl Default for GameData {
+    fn default() -> Self {
+        Self {
+            board: Board::default(),
+            moving_brick: BrickShape::rand(),
+            moving_orig: consts::BRICK_START_DOT,
+            next_brick: BrickShape::rand(),
+            freeze: false,
+            keyboard_timer: Timer::from_seconds(consts::TIMER_KEY_SECS, TimerMode::Repeating),
+            falling_timer: Timer::from_seconds(consts::TIMER_FALLING_SECS, TimerMode::Repeating),
+            deleted_lines: 0,
+            score: 0,
+            lines: 0,
+            level: 0,
+        }
+    }
+}
+
+#[inline]
+fn dot_to_vec2(dot: &Dot) -> Vec2 {
+    Vec2::new(DOT_WIDTH_PX * dot.0 as f32, DOT_WIDTH_PX * dot.1 as f32)
+}
+
+///tetris speeding
+///delay = 725 * .85 ^ level + level (ms)
+///use formula from dwhacks, http://gist.github.com/dwhacks/8644250
+#[inline]
+pub fn get_speed(level: u32) -> f32 {
+    consts::TIMER_FALLING_SECS * (0.85_f32).powi(level as i32) + level as f32 / 1000.0
+}
+
+///tetris scoring
+///use as [Original Nintendo Scoring System]
+///https://tetris.fandom.com/wiki/Scoring
+#[inline]
+pub fn get_score(level: u32, erase_lines: u32) -> u32 {
+    assert!(0 < erase_lines);
+    assert!(erase_lines <= 4);
+    vec![40, 100, 300, 1200][(erase_lines - 1) as usize] * (level + 1)
+}
+
+///level
+///increase level every 10 lines.
+#[inline]
+pub fn get_level(total_lines: u32) -> u32 {
+    (total_lines / 10).min(99)
+}

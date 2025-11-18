@@ -1,0 +1,37 @@
+[package]
+publish = false
+name = "frontend"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+bevy = { version = "0.17" }
+candid.workspace = true
+flume = "0.11"
+haalka = "0.5.1"
+ic-agent = "0.44"
+ic-auth-client = { path = "../../../../", default-features = false, features = [
+    "native",
+    "tracing",
+] }
+keyring = "3.6"
+lazy_static = "1.5"
+rand = "0.9"
+serde.workspace = true
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+util.workspace = true
+
+# Enable only a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 's'
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"

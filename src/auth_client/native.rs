@@ -2,7 +2,7 @@ use crate::{
     ArcIdentity, AuthClientError,
     api::AuthResponseSuccess,
     idle_manager::{IdleManager, IdleManagerOptions},
-    key::{BaseKeyType, Key, KeyWithRaw},
+    key::{Key, KeyWithRaw},
     option::{AuthClientLoginOptions, IdleOptions, native::NativeAuthClientCreateOptions},
     storage::{
         KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, StoredKey,
@@ -10,6 +10,7 @@ use crate::{
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
 };
+use base64::prelude::{BASE64_STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
 use futures::{channel::oneshot, executor::block_on};
 use ic_agent::{
@@ -17,6 +18,7 @@ use ic_agent::{
     identity::{AnonymousIdentity, DelegatedIdentity, DelegationError, Identity, SignedDelegation},
 };
 use parking_lot::Mutex;
+use serde_json::Number;
 use std::{sync::Arc, thread, time::Duration};
 use tiny_http::{Response, Server};
 use url::Url;
@@ -439,76 +441,235 @@ impl NativeAuthClient {
 
     /// Handles the redirect from the identity provider.
     fn handle_get_redirect(request: tiny_http::Request, tx: oneshot::Sender<CallbackResult>) {
-        let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
-            "Login window closed or redirect failed.".to_string(),
-        )));
-        let response = Response::from_string(
-            "<h1>Login failed!</h1><p>Login window closed or redirect failed.</p>",
-        )
-        .with_header(
-            "Content-Type: text/html"
-                .parse::<tiny_http::Header>()
-                .unwrap(),
-        );
-        let _ = request.respond(response);
-    }
-
-    /// Handles incoming POST requests with authentication data.
-    fn handle_post_callback(mut request: tiny_http::Request, tx: oneshot::Sender<CallbackResult>) {
-        let mut content = String::new();
-        if let Err(e) = request.as_reader().read_to_string(&mut content) {
-            let _ = tx.send(CallbackResult::Error(NativeLoginError::ServerError(
-                Box::new(e),
-            )));
-            let _ = request
-                .respond(Response::from_string("Error reading request body").with_status_code(500));
-            return;
-        }
-
-        let json: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(json) => json,
+        let url = match Url::parse(&format!("http://localhost{}", request.url())) {
+            Ok(url) => url,
             Err(e) => {
-                let _ = tx.send(CallbackResult::Error(NativeLoginError::JsonError(e)));
-                let _ = request.respond(
-                    Response::from_string("Error parsing JSON body").with_status_code(400),
+                Self::respond_with_html_error(
+                    request,
+                    tx,
+                    NativeLoginError::UrlParseError(e),
+                    "Login window closed or redirect failed.",
                 );
                 return;
             }
         };
 
+        let payload = url
+            .query_pairs()
+            .find(|(key, _)| key == "payload")
+            .map(|(_, value)| value.into_owned());
+
+        let Some(payload_value) = payload else {
+            Self::respond_with_html_error(
+                request,
+                tx,
+                NativeLoginError::MissingDelegationOrError,
+                "Missing authentication payload.",
+            );
+            return;
+        };
+
+        let mut json = match Self::deserialize_payload(&payload_value) {
+            Ok(json) => json,
+            Err(err) => {
+                let message = match err {
+                    NativeLoginError::JsonError(_) => "Failed to parse authentication payload.",
+                    _ => "Invalid authentication payload.",
+                };
+                Self::respond_with_html_error(request, tx, err, message);
+                return;
+            }
+        };
+
+        if let Err(err) = Self::normalize_delegations(&mut json) {
+            Self::respond_with_html_error(request, tx, err, "Invalid authentication payload.");
+            return;
+        }
+
+        Self::respond_with_callback(request, tx, Self::process_auth_payload(json, true));
+    }
+
+    /// Handles incoming POST requests with authentication data.
+    fn handle_post_callback(request: tiny_http::Request, tx: oneshot::Sender<CallbackResult>) {
+        let mut request = request;
+        let mut content = String::new();
+        if let Err(e) = request.as_reader().read_to_string(&mut content) {
+            let _ = tx.send(CallbackResult::Error(NativeLoginError::ServerError(
+                Box::new(e),
+            )));
+            let _ = request.respond(Self::cors_response("Error reading request body", 500));
+            return;
+        }
+
+        let mut json: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(json) => json,
+            Err(e) => {
+                let _ = tx.send(CallbackResult::Error(NativeLoginError::JsonError(e)));
+                let _ = request.respond(Self::cors_response("Error parsing JSON body", 400));
+                return;
+            }
+        };
+
+        if let Err(err) = Self::normalize_delegations(&mut json) {
+            let _ = tx.send(CallbackResult::Error(err));
+            let _ = request.respond(Self::cors_response("Invalid authentication payload", 400));
+            return;
+        }
+
+        Self::respond_with_callback(request, tx, Self::process_auth_payload(json, false));
+    }
+
+    fn process_auth_payload(
+        json: serde_json::Value,
+        render_html: bool,
+    ) -> (Response<std::io::Cursor<Vec<u8>>>, CallbackResult) {
         let response_type = json["type"].as_str();
 
         match response_type {
             Some("success") => {
                 match serde_json::from_value::<AuthResponseSuccess>(json["data"].clone()) {
                     Ok(success_data) => {
-                        let _ = tx.send(CallbackResult::Success(success_data));
-                        let _ = request.respond(Response::from_string("OK").with_status_code(200));
+                        let response = if render_html {
+                            Self::html_response(
+                                "<h1>Login successful</h1><p>You can close this window.</p>",
+                                200,
+                            )
+                        } else {
+                            Self::cors_response("OK", 200)
+                        };
+                        (response, CallbackResult::Success(success_data))
                     }
                     Err(e) => {
-                        let _ = tx.send(CallbackResult::Error(NativeLoginError::JsonError(e)));
-                        let _ = request.respond(
-                            Response::from_string("Error parsing success data")
-                                .with_status_code(400),
-                        );
+                        let response = if render_html {
+                            Self::html_response(
+                                "<h1>Login failed</h1><p>Invalid success payload.</p>",
+                                400,
+                            )
+                        } else {
+                            Self::cors_response("Error parsing success data", 400)
+                        };
+                        (
+                            response,
+                            CallbackResult::Error(NativeLoginError::JsonError(e)),
+                        )
                     }
                 }
             }
             Some("error") => {
                 let error_message = json["data"].as_str().unwrap_or("Unknown error").to_string();
-                let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
-                    error_message,
-                )));
-                let _ = request.respond(Response::from_string("Error").with_status_code(200));
+                let response = if render_html {
+                    Self::html_response(
+                        &format!("<h1>Login failed</h1><p>{}</p>", error_message),
+                        400,
+                    )
+                } else {
+                    Self::cors_response("Error", 200)
+                };
+                (
+                    response,
+                    CallbackResult::Error(NativeLoginError::Custom(error_message)),
+                )
             }
             _ => {
-                let _ = tx.send(CallbackResult::Error(NativeLoginError::Custom(
-                    "Invalid response type".to_string(),
-                )));
-                let _ = request
-                    .respond(Response::from_string("Invalid response type").with_status_code(400));
+                let response = if render_html {
+                    Self::html_response("<h1>Login failed</h1><p>Invalid response type.</p>", 400)
+                } else {
+                    Self::cors_response("Invalid response type", 400)
+                };
+                (
+                    response,
+                    CallbackResult::Error(NativeLoginError::Custom(
+                        "Invalid response type".to_string(),
+                    )),
+                )
             }
         }
+    }
+
+    fn respond_with_html_error(
+        request: tiny_http::Request,
+        tx: oneshot::Sender<CallbackResult>,
+        error: NativeLoginError,
+        message: &str,
+    ) {
+        let _ = tx.send(CallbackResult::Error(error));
+        let body = format!("<h1>Login failed</h1><p>{}</p>", message);
+        let _ = request.respond(Self::html_response(&body, 400));
+    }
+
+    fn respond_with_callback(
+        request: tiny_http::Request,
+        tx: oneshot::Sender<CallbackResult>,
+        outcome: (Response<std::io::Cursor<Vec<u8>>>, CallbackResult),
+    ) {
+        let (response, callback_result) = outcome;
+        let _ = tx.send(callback_result);
+        let _ = request.respond(response);
+    }
+
+    fn html_response(body: &str, status_code: u16) -> Response<std::io::Cursor<Vec<u8>>> {
+        Response::from_string(body)
+            .with_status_code(status_code)
+            .with_header(
+                tiny_http::Header::from_bytes(b"Content-Type", b"text/html; charset=utf-8")
+                    .unwrap(),
+            )
+    }
+
+    fn cors_response(body: &str, status_code: u16) -> Response<std::io::Cursor<Vec<u8>>> {
+        let mut response = Response::from_string(body).with_status_code(status_code);
+        response = response.with_header(
+            tiny_http::Header::from_bytes(b"Access-Control-Allow-Origin", b"*").unwrap(),
+        );
+        response = response.with_header(
+            tiny_http::Header::from_bytes(b"Access-Control-Allow-Headers", b"Content-Type")
+                .unwrap(),
+        );
+        response = response.with_header(
+            tiny_http::Header::from_bytes(b"Access-Control-Allow-Methods", b"POST, OPTIONS")
+                .unwrap(),
+        );
+        response.with_header(
+            tiny_http::Header::from_bytes(b"Access-Control-Allow-Private-Network", b"true")
+                .unwrap(),
+        )
+    }
+
+    fn deserialize_payload(payload: &str) -> Result<serde_json::Value, NativeLoginError> {
+        let decoded_payload = BASE64_STANDARD
+            .decode(payload.as_bytes())
+            .map_err(|e| NativeLoginError::Custom(format!("Invalid payload encoding: {}", e)))?;
+        let mut json = serde_json::from_slice(&decoded_payload)?;
+        Self::normalize_delegations(&mut json)?;
+        Ok(json)
+    }
+
+    fn normalize_delegations(json: &mut serde_json::Value) -> Result<(), NativeLoginError> {
+        let Some(data) = json.get_mut("data") else {
+            return Ok(());
+        };
+
+        let Some(delegations) = data.get_mut("delegations").and_then(|d| d.as_array_mut()) else {
+            return Ok(());
+        };
+
+        for delegation in delegations.iter_mut() {
+            let Some(expiration_value) = delegation
+                .get_mut("delegation")
+                .and_then(|d| d.get_mut("expiration"))
+            else {
+                continue;
+            };
+
+            if let Some(exp_str) = expiration_value.as_str() {
+                let parsed = exp_str.parse::<u64>().map_err(|e| {
+                    NativeLoginError::Custom(format!("Invalid delegation expiration: {}", e))
+                })?;
+                *expiration_value = serde_json::Value::Number(Number::from(parsed));
+            }
+        }
+
+        Ok(())
     }
 
     /// Finishes the login process after the delegation has been received.
@@ -567,12 +728,25 @@ impl NativeAuthClient {
                     }
                 };
 
+                if request.method() == &tiny_http::Method::Options
+                    && request.url().starts_with("/auth-callback")
+                {
+                    let response = Self::cors_response("", 204);
+                    if let Err(_e) = request.respond(response) {
+                        #[cfg(feature = "tracing")]
+                        error!("Failed to respond to OPTIONS request: {}", _e);
+                    }
+                    continue;
+                }
+
                 let handler: Option<fn(tiny_http::Request, oneshot::Sender<CallbackResult>)> =
                     if request.method() == &tiny_http::Method::Post
                         && request.url().starts_with("/auth-callback")
                     {
                         Some(Self::handle_post_callback)
-                    } else if request.method() == &tiny_http::Method::Get {
+                    } else if request.method() == &tiny_http::Method::Get
+                        && request.url().starts_with("/auth-callback")
+                    {
                         Some(Self::handle_get_redirect)
                     } else {
                         None
@@ -585,9 +759,9 @@ impl NativeAuthClient {
 
                 // Fallback for any other request.
                 let response = Response::from_string("").with_status_code(204);
-                if let Err(e) = request.respond(response) {
+                if let Err(_e) = request.respond(response) {
                     #[cfg(feature = "tracing")]
-                    error!("Failed to respond to unexpected request: {}", e);
+                    error!("Failed to respond to unexpected request: {}", _e);
                 }
             }
 
@@ -656,7 +830,9 @@ impl NativeAuthClient {
         }
 
         if let Some(ref custom_values) = options.custom_values {
-            query_pairs.append_pair("customValues", &format!("{:?}", custom_values));
+            if let Ok(json) = serde_json::to_string(custom_values) {
+                query_pairs.append_pair("customValues", &json);
+            }
         }
     }
 
@@ -698,5 +874,131 @@ impl NativeAuthClient {
         storage.remove(KEY_STORAGE_KEY)?;
         storage.remove(KEY_STORAGE_DELEGATION)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn has_header(response: &Response<std::io::Cursor<Vec<u8>>>, key: &str, value: &str) -> bool {
+        response.headers().iter().any(|header| {
+            let header_name: &str = header.field.as_str().as_ref();
+            let header_value: &str = header.value.as_str();
+            header_name.eq_ignore_ascii_case(key) && header_value.eq_ignore_ascii_case(value)
+        })
+    }
+
+    #[test]
+    fn cors_response_exposes_private_network_headers() {
+        let response = NativeAuthClient::cors_response("", 204);
+        assert_eq!(response.status_code().0, 204);
+        assert!(has_header(
+            &response,
+            "Access-Control-Allow-Private-Network",
+            "true"
+        ));
+        assert!(has_header(&response, "Access-Control-Allow-Origin", "*"));
+    }
+
+    #[test]
+    fn process_auth_payload_returns_success_and_cors_headers() {
+        let payload = json!({
+            "type": "success",
+            "data": {
+                "delegations": [],
+                "userPublicKey": [],
+                "authnMethod": "native"
+            }
+        });
+        let (response, callback) = NativeAuthClient::process_auth_payload(payload, false);
+        assert_eq!(response.status_code().0, 200);
+        assert!(has_header(&response, "Access-Control-Allow-Origin", "*"));
+        assert!(has_header(
+            &response,
+            "Access-Control-Allow-Private-Network",
+            "true"
+        ));
+
+        match callback {
+            CallbackResult::Success(data) => assert_eq!(data.authn_method, "native"),
+            CallbackResult::Error(err) => panic!("unexpected error: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn process_auth_payload_renders_html_when_requested() {
+        let payload = json!({
+            "type": "success",
+            "data": {
+                "delegations": [],
+                "userPublicKey": [],
+                "authnMethod": "redirect"
+            }
+        });
+        let (response, callback) = NativeAuthClient::process_auth_payload(payload, true);
+        assert_eq!(response.status_code().0, 200);
+        assert!(has_header(
+            &response,
+            "Content-Type",
+            "text/html; charset=utf-8"
+        ));
+        assert!(matches!(callback, CallbackResult::Success(_)));
+    }
+
+    #[test]
+    fn process_auth_payload_handles_remote_errors() {
+        let payload = json!({
+            "type": "error",
+            "data": "Browser closed"
+        });
+        let (response, callback) = NativeAuthClient::process_auth_payload(payload, false);
+        assert_eq!(response.status_code().0, 200);
+        match callback {
+            CallbackResult::Error(NativeLoginError::Custom(message)) => {
+                assert_eq!(message, "Browser closed");
+            }
+            _ => panic!("expected custom error"),
+        }
+    }
+
+    #[test]
+    fn deserialize_payload_decodes_base64_json() {
+        let payload = json!({
+            "type": "success",
+            "data": {
+                "delegations": [],
+                "userPublicKey": [],
+                "authnMethod": "redirect"
+            }
+        })
+        .to_string();
+        let encoded = BASE64_STANDARD.encode(payload.as_bytes());
+        let json = NativeAuthClient::deserialize_payload(&encoded).expect("decode payload");
+        assert_eq!(json["type"], "success");
+    }
+
+    #[test]
+    fn normalize_delegations_handles_string_expiration() {
+        let mut json = json!({
+            "type": "success",
+            "data": {
+                "delegations": [{
+                    "delegation": {
+                        "expiration": "1763421459179717000",
+                        "pubkey": [],
+                        "targets": []
+                    },
+                    "signature": []
+                }],
+                "userPublicKey": [],
+                "authnMethod": "native"
+            }
+        });
+
+        NativeAuthClient::normalize_delegations(&mut json).expect("normalize");
+
+        assert!(json["data"]["delegations"][0]["delegation"]["expiration"].is_number());
     }
 }

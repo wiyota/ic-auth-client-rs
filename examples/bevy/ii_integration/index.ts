@@ -73,10 +73,7 @@ type LoginOptions = {
   customValues?: Record<string, unknown>;
 };
 
-function buildLoginOptions(
-  params: Params,
-  identityProvider?: string,
-): LoginOptions {
+function buildLoginOptions(params: Params, identityProvider?: string): LoginOptions {
   return {
     identityProvider,
     maxTimeToLive: params.maxTimeToLive,
@@ -122,10 +119,7 @@ async function sendPostMessage(redirectUri: string, payload: CallbackPayload) {
   }
 }
 
-async function postToNativeCallback(
-  redirectUri: string,
-  payload: CallbackPayload,
-) {
+async function postToNativeCallback(redirectUri: string, payload: CallbackPayload) {
   const body = serializePayload(payload);
   await fetch(redirectUri, {
     method: "POST",
@@ -152,12 +146,9 @@ function serializeResponse(
   };
 }
 
-type DelegationPayload =
-  InternetIdentityAuthResponseSuccess["delegations"][number];
+type DelegationPayload = InternetIdentityAuthResponseSuccess["delegations"][number];
 
-function serializeDelegation(
-  delegation: DelegationPayload,
-): SerializedDelegation {
+function serializeDelegation(delegation: DelegationPayload): SerializedDelegation {
   return {
     signature: toBytes(delegation.signature),
     delegation: {
@@ -168,9 +159,7 @@ function serializeDelegation(
   };
 }
 
-function serializeExpiration(
-  expiration: DelegationPayload["delegation"]["expiration"],
-) {
+function serializeExpiration(expiration: DelegationPayload["delegation"]["expiration"]) {
   return expiration ? expiration.toString() : undefined;
 }
 
@@ -217,9 +206,7 @@ function toUint8Array(value: unknown): Uint8Array {
 
   if (ArrayBuffer.isView(value)) {
     const view = value as ArrayBufferView;
-    return new Uint8Array(
-      view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength),
-    );
+    return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
   }
 
   return new Uint8Array(value as ArrayLike<number>);

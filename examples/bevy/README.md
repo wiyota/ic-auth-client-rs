@@ -1,0 +1,47 @@
+# AuthClient + Bevy Example
+
+This workspace demonstrates how to integrate the Rust
+[`ic-auth-client`](https://github.com/wiyota/ic-auth-client-rs/) crate with a
+native Bevy application. The gameplay logic borrows pieces of
+[bevy-tetris](https://github.com/corbamico/bevy-tetris), adapted specifically
+for this Internet Identity example.
+
+## Requirements
+
+- Rust toolchain (1.78+ recommended)
+- `dfx` 0.24+ running locally for the backend/II integration canisters
+- Node.js 22.12+ (needed to build `ii_integration`)
+
+## Running Locally
+
+1. Start a local replica and deploy the example canisters from the repo root:
+   ```bash
+   dfx start --background
+   make deploy
+   ```
+2. Build the Internet Identity integration assets (only needed when they
+   change):
+   ```bash
+   npm install
+   ```
+3. Launch the Bevy client:
+   ```bash
+   cargo run
+   ```
+   The game window will display a login overlay. Clicking “IIでログイン” opens
+   Internet Identity; after authenticating, the game transitions into play.
+
+## Troubleshooting
+
+- Enable verbose logs via `RUST_LOG="frontend=debug,ic_auth_client=trace"` to
+  observe every login callback and backend request.
+- Keep the browser dev tools open on the II popup to catch serialization or
+  postMessage errors during the login flow.
+
+## License
+
+### bevy-tetris
+
+- GPLv3, Copyright by corbamico@163.com
+- Assets `digital7mono.ttf`: TrueType Fonts — DIGITAL-7 version 1.02 (by
+  Sizenko Alexander, Style-7)

@@ -2,7 +2,7 @@
 //!
 //! This module provides keyring-based storage for secure credential management.
 
-use super::{StorageError, StoredKey};
+use super::{DecodeError, StorageError, StoredKey};
 use keyring::Entry;
 
 const KEYRING_STORAGE_PREFIX: &str = "ic-";
@@ -25,7 +25,20 @@ impl AuthClientStorage for KeyringStorage {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
         let entry = Entry::new(&self.service_name, &key)?;
         match entry.get_secret() {
-            Ok(value) => Ok(Some(value.try_into()?)),
+            Ok(value) => {
+                if value.len() == 32 {
+                    let bytes: [u8; 32] = value.try_into().map_err(|_| {
+                        StorageError::Decode(DecodeError::Ed25519(
+                            "Invalid slice length".to_string(),
+                        ))
+                    })?;
+                    Ok(Some(StoredKey::Raw(bytes)))
+                } else {
+                    let string = String::from_utf8(value)
+                        .map_err(|e| StorageError::Decode(DecodeError::Ed25519(e.to_string())))?;
+                    Ok(Some(StoredKey::String(string)))
+                }
+            }
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -34,11 +47,11 @@ impl AuthClientStorage for KeyringStorage {
     fn set<T: AsRef<str>>(&mut self, key: T, value: StoredKey) -> Result<(), StorageError> {
         let key = format!("{}{}", KEYRING_STORAGE_PREFIX, key.as_ref());
         let entry = Entry::new(&self.service_name, &key)?;
-        let value = match value {
-            StoredKey::String(_) => value.decode()?,
-            StoredKey::Raw(value) => value,
+        let bytes: Vec<u8> = match value {
+            StoredKey::String(string) => string.into_bytes(),
+            StoredKey::Raw(value) => value.to_vec(),
         };
-        entry.set_secret(&value)?;
+        entry.set_secret(&bytes)?;
         Ok(())
     }
 

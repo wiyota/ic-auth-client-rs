@@ -135,7 +135,6 @@ impl From<web_sys::wasm_bindgen::JsValue> for StorageError {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
