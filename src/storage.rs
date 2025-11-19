@@ -113,12 +113,15 @@ pub enum StorageError {
     /// An error from the web-sys storage.
     #[error("Web Sys error: {0}")]
     WebSys(String),
+    /// An error from filesystem storage.
+    #[error("File storage error: {0}")]
+    File(String),
     /// An error that occurred during decoding.
     #[error("Decode error: {0}")]
     Decode(#[from] DecodeError),
 }
 
-#[cfg(feature = "native")]
+#[cfg(feature = "keyring")]
 impl From<keyring::Error> for StorageError {
     fn from(err: keyring::Error) -> Self {
         StorageError::Keyring(err.to_string())
@@ -132,6 +135,12 @@ impl From<web_sys::wasm_bindgen::JsValue> for StorageError {
             err.as_string()
                 .unwrap_or_else(|| "unknown websys error".to_string()),
         )
+    }
+}
+
+impl From<std::io::Error> for StorageError {
+    fn from(err: std::io::Error) -> Self {
+        StorageError::File(err.to_string())
     }
 }
 

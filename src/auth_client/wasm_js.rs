@@ -9,7 +9,7 @@ use crate::{
     option::{AuthClientLoginOptions, IdleOptions, wasm_js::AuthClientCreateOptions},
     storage::{
         KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_VECTOR, StoredKey,
-        async_storage::{AuthClientStorage, AuthClientStorageType},
+        async_storage::{AuthClientStorage, LocalStorage},
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
 };
@@ -25,7 +25,7 @@ use ic_agent::{
 };
 use parking_lot::Mutex;
 use serde_wasm_bindgen::from_value;
-use std::{cell::RefCell, sync::Arc, time::Duration};
+use std::{cell::RefCell, fmt, sync::Arc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{
     Location, MessageEvent,
@@ -62,14 +62,22 @@ impl Drop for ActiveLogin {
     }
 }
 
-#[derive(Debug)]
 pub(super) struct AuthClientInner {
     pub identity: Arc<Mutex<ArcIdentity>>,
     pub key: Key,
-    pub storage: FutureMutex<AuthClientStorageType>,
+    pub storage: FutureMutex<Box<dyn AuthClientStorage>>,
     pub chain: Arc<Mutex<Option<DelegationChain>>>,
     pub idle_manager: Mutex<Option<IdleManager>>,
     pub idle_options: Option<IdleOptions>,
+}
+
+impl fmt::Debug for AuthClientInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthClientInner")
+            .field("key", &self.key)
+            .field("idle_options", &self.idle_options)
+            .finish()
+    }
 }
 
 impl Drop for AuthClientInner {
@@ -102,15 +110,22 @@ impl AuthClient {
     pub async fn new_with_options(
         options: AuthClientCreateOptions,
     ) -> Result<Self, AuthClientError> {
-        let mut storage = options.storage.unwrap_or_default();
-        let options_identity_is_some = options.identity.is_some();
+        let AuthClientCreateOptions {
+            identity,
+            storage,
+            key_type: _key_type,
+            idle_options,
+        } = options;
 
-        let key = Self::create_or_load_key(options.identity, &mut storage).await?;
+        let mut storage = storage.unwrap_or_else(|| Box::new(LocalStorage::new()));
+        let options_identity_is_some = identity.is_some();
 
-        let (chain, identity) = Self::load_delegation_chain(&mut storage, &key).await;
+        let key = Self::create_or_load_key(identity, storage.as_mut()).await?;
+
+        let (chain, identity) = Self::load_delegation_chain(storage.as_mut(), &key).await;
 
         let idle_manager =
-            Self::create_idle_manager(&options.idle_options, &chain, options_identity_is_some);
+            Self::create_idle_manager(&idle_options, &chain, options_identity_is_some);
 
         Ok(Self(Arc::new(AuthClientInner {
             identity: Arc::new(Mutex::new(identity)),
@@ -118,14 +133,14 @@ impl AuthClient {
             storage: FutureMutex::new(storage),
             chain: Arc::new(Mutex::new(chain)),
             idle_manager: Mutex::new(idle_manager),
-            idle_options: options.idle_options,
+            idle_options,
         })))
     }
 
     /// Creates a new key if one is not found in storage, otherwise loads the existing key.
     async fn create_or_load_key(
         identity: Option<ArcIdentity>,
-        storage: &mut AuthClientStorageType,
+        storage: &mut dyn AuthClientStorage,
     ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
@@ -166,7 +181,7 @@ impl AuthClient {
 
     /// Loads a delegation chain from storage and updates the identity if the chain is valid.
     async fn load_delegation_chain(
-        storage: &mut AuthClientStorageType,
+        storage: &mut dyn AuthClientStorage,
         key: &Key,
     ) -> (Option<DelegationChain>, ArcIdentity) {
         let mut identity = ArcIdentity::from(key);
@@ -746,9 +761,9 @@ impl AuthClient {
     }
 
     /// Logs out the user and clears the stored identity.
-    async fn logout_core<S: AuthClientStorage>(
+    async fn logout_core(
         identity: Arc<Mutex<ArcIdentity>>,
-        storage: &mut S,
+        storage: &mut dyn AuthClientStorage,
         chain: Arc<Mutex<Option<DelegationChain>>>,
         return_to: Option<Location>,
     ) {
@@ -801,9 +816,10 @@ impl AuthClient {
         }
 
         let mut storage_lock = self.0.storage.lock().await;
+        let storage_ref: &mut dyn AuthClientStorage = &mut **storage_lock;
         Self::logout_core(
             self.0.identity.clone(),
-            &mut *storage_lock,
+            storage_ref,
             self.0.chain.clone(),
             return_to,
         )
@@ -811,10 +827,9 @@ impl AuthClient {
     }
 
     /// Deletes the stored keys from the provided storage.
-    async fn delete_storage<S>(storage: &mut S) -> Result<(), crate::storage::StorageError>
-    where
-        S: AuthClientStorage,
-    {
+    async fn delete_storage(
+        storage: &mut dyn AuthClientStorage,
+    ) -> Result<(), crate::storage::StorageError> {
         storage.remove(KEY_STORAGE_KEY).await?;
         storage.remove(KEY_STORAGE_DELEGATION).await?;
         storage.remove(KEY_VECTOR).await?;
@@ -826,7 +841,7 @@ impl AuthClient {
 #[derive(Default)]
 pub struct AuthClientBuilder {
     identity: Option<ArcIdentity>,
-    storage: Option<AuthClientStorageType>,
+    storage: Option<Box<dyn AuthClientStorage>>,
     key_type: Option<BaseKeyType>,
     idle_options: Option<IdleOptions>,
 }
@@ -844,8 +859,11 @@ impl AuthClientBuilder {
     }
 
     /// Optional storage with get, set, and remove methods. Currentry only `LocalStorage` is supported.
-    pub fn storage(mut self, storage: AuthClientStorageType) -> Self {
-        self.storage = Some(storage);
+    pub fn storage<S>(mut self, storage: S) -> Self
+    where
+        S: AuthClientStorage + 'static,
+    {
+        self.storage = Some(Box::new(storage));
         self
     }
 

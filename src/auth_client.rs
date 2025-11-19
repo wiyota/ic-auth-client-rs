@@ -20,6 +20,10 @@ pub enum AuthClientError {
     /// An error from the delegation.
     #[error("Delegation error: {0}")]
     Delegation(#[from] ic_agent::identity::DelegationError),
+    /// An error that occurred while loading a PEM file.
+    #[cfg(feature = "pem")]
+    #[error("PEM error: {0}")]
+    Pem(#[from] ic_agent::identity::PemError),
 }
 
 impl From<DecodeError> for AuthClientError {

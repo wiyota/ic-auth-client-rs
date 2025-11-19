@@ -54,17 +54,22 @@ web-sys = { version = "0.3", optional = true, default-features = false, features
 chrono = { version = "0.4", optional = true }
 futures-timer = "3.0"
 hex = { version = "0.4", optional = true }
-keyring = { version = "3", optional = true, features = [
-    "apple-native",
-    "windows-native",
-    "sync-secret-service",
-] }
 percent-encoding = { version = "2.3", optional = true }
 portpicker = { version = "0.1", optional = true }
 rdev = { version = "0.5", optional = true }
 tiny_http = { version = "0.12", optional = true }
 url = { version = "2", optional = true }
 webbrowser = { version = "1.0", optional = true }
+# `keyring` feature
+keyring = { version = "3", optional = true, features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+# `pem` feature
+pkcs8 = { version = "0.10", optional = true, default-features = true, features = [
+    "pem",
+] }
 
 [dev-dependencies]
 serde_test = "1.0"
@@ -77,11 +82,16 @@ default = ["wasm-js"]
 
 # miniserde = []
 
-## Enable native platform support
+## Enable secure store relying on platform for `native` feature
+keyring = ["dep:keyring"]
+
+## Enable PEM support for `native` feature
+pem = ["dep:pkcs8", "ic-agent/pem"]
+
+## Enable native platform support (needs one of `keyring` or `pem` feature)
 native = [
     "dep:chrono",
     "dep:hex",
-    "dep:keyring",
     "dep:percent-encoding",
     "dep:portpicker",
     "dep:rdev",

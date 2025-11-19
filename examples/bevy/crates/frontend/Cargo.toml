@@ -12,6 +12,7 @@ flume = "0.11"
 haalka = "0.5.1"
 ic-agent = "0.44"
 ic-auth-client = { path = "../../../../", default-features = false, features = [
+    "keyring",
     "native",
     "tracing",
 ] }

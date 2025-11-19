@@ -1,3 +1,7 @@
+#[cfg(feature = "keyring")]
+use crate::storage::sync_storage::KeyringStorage;
+#[cfg(feature = "pem")]
+use crate::storage::sync_storage::PemStorage;
 use crate::{
     ArcIdentity, AuthClientError,
     api::AuthResponseSuccess,
@@ -5,8 +9,8 @@ use crate::{
     key::{Key, KeyWithRaw},
     option::{AuthClientLoginOptions, IdleOptions, native::NativeAuthClientCreateOptions},
     storage::{
-        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, StoredKey,
-        sync_storage::{AuthClientStorage, AuthClientStorageType, KeyringStorage},
+        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, StorageError, StoredKey,
+        sync_storage::AuthClientStorage,
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
 };
@@ -19,7 +23,13 @@ use ic_agent::{
 };
 use parking_lot::Mutex;
 use serde_json::Number;
-use std::{sync::Arc, thread, time::Duration};
+use std::{fmt, sync::Arc, thread, time::Duration};
+#[cfg(feature = "pem")]
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 use tiny_http::{Response, Server};
 use url::Url;
 
@@ -68,20 +78,27 @@ pub enum NativeLoginError {
     Custom(String),
 }
 
-#[derive(Debug)]
 enum CallbackResult {
     Success(AuthResponseSuccess),
     Error(NativeLoginError),
 }
 
-#[derive(Debug)]
 pub(super) struct AuthClientInner {
     pub identity: Arc<Mutex<ArcIdentity>>,
     pub key: Key,
-    pub storage: Mutex<AuthClientStorageType>,
+    pub storage: Mutex<Box<dyn AuthClientStorage>>,
     pub chain: Arc<Mutex<Option<DelegationChain>>>,
     pub idle_manager: Mutex<Option<IdleManager>>,
     pub idle_options: Option<IdleOptions>,
+}
+
+impl fmt::Debug for AuthClientInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthClientInner")
+            .field("key", &self.key)
+            .field("idle_options", &self.idle_options)
+            .finish()
+    }
 }
 
 /// The tool for managing authentication and identity.
@@ -92,11 +109,45 @@ pub struct NativeAuthClient(Arc<AuthClientInner>);
 
 impl NativeAuthClient {
     /// Creates a new [`AuthClient`] with default options.
-    pub fn new<T: Into<String>>(service_name: T) -> Result<Self, AuthClientError> {
+    #[cfg(feature = "keyring")]
+    pub fn new<T: AsRef<str>>(service_name: T) -> Result<Self, AuthClientError> {
         let options = NativeAuthClientCreateOptions::builder()
-            .storage(AuthClientStorageType::Keyring(KeyringStorage::new(
-                service_name.into(),
-            )))
+            .storage(KeyringStorage::new(service_name.as_ref()))
+            .build();
+        Self::new_with_options(options)
+    }
+
+    /// Creates a new [`AuthClient`] using the first PEM file found inside the provided directory.
+    #[cfg(feature = "pem")]
+    pub fn new_with_pem_directory<T, P>(
+        service_name: T,
+        directory: P,
+    ) -> Result<Self, AuthClientError>
+    where
+        T: Into<String>,
+        P: Into<PathBuf>,
+    {
+        let service_name = service_name.into();
+        let directory = directory.into();
+
+        let mut storage_dir = directory.clone();
+        storage_dir.push(format!(
+            "ic-auth-client-{}",
+            sanitize_service_name(&service_name)
+        ));
+
+        let mut storage = PemStorage::new(storage_dir);
+
+        let key_exists = storage.get(KEY_STORAGE_KEY)?.is_some();
+
+        if !key_exists {
+            if let Some(pem_path) = find_pem_file_in_directory(&directory)? {
+                storage.import_private_key_from_pem_file(pem_path)?;
+            }
+        }
+
+        let options = NativeAuthClientCreateOptions::builder()
+            .storage(storage)
             .build();
         Self::new_with_options(options)
     }
@@ -104,7 +155,7 @@ impl NativeAuthClient {
     /// Creates a new key if one is not found in storage, otherwise loads the existing key.
     fn create_or_load_key(
         identity: Option<ArcIdentity>,
-        storage: &mut AuthClientStorageType,
+        storage: &mut dyn AuthClientStorage,
     ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
@@ -148,7 +199,7 @@ impl NativeAuthClient {
 
     /// Loads a delegation chain from storage and updates the identity if the chain is valid.
     fn load_delegation_chain(
-        storage: &mut AuthClientStorageType,
+        storage: &mut dyn AuthClientStorage,
         key: &Key,
     ) -> (Option<DelegationChain>, ArcIdentity) {
         let mut identity = ArcIdentity::from(key.clone());
@@ -216,12 +267,13 @@ impl NativeAuthClient {
     pub fn new_with_options(
         options: NativeAuthClientCreateOptions,
     ) -> Result<Self, AuthClientError> {
+        let identity = options.identity.clone();
+        let options_identity_is_some = identity.is_some();
         let mut storage = options.storage;
-        let options_identity_is_some = options.identity.is_some();
 
-        let key = Self::create_or_load_key(options.identity, &mut storage)?;
+        let key = Self::create_or_load_key(identity, storage.as_mut())?;
 
-        let (chain, identity) = Self::load_delegation_chain(&mut storage, &key);
+        let (chain, identity) = Self::load_delegation_chain(storage.as_mut(), &key);
 
         let idle_manager =
             Self::create_idle_manager(&options.idle_options, &chain, options_identity_is_some);
@@ -837,9 +889,9 @@ impl NativeAuthClient {
     }
 
     /// Core logout logic that clears identity and storage.
-    fn logout_core<S: AuthClientStorage>(
+    fn logout_core(
         identity: Arc<Mutex<ArcIdentity>>,
-        storage: &mut S,
+        storage: &mut dyn AuthClientStorage,
         chain: Arc<Mutex<Option<DelegationChain>>>,
     ) {
         if let Err(_e) = Self::delete_storage_native(storage) {
@@ -859,22 +911,55 @@ impl NativeAuthClient {
         }
 
         let mut storage_lock = self.0.storage.lock();
-        Self::logout_core(
-            self.0.identity.clone(),
-            &mut *storage_lock,
-            self.0.chain.clone(),
-        );
+        let storage_ref: &mut dyn AuthClientStorage = &mut **storage_lock;
+        Self::logout_core(self.0.identity.clone(), storage_ref, self.0.chain.clone());
     }
 
     /// Deletes the key and delegation from storage.
-    fn delete_storage_native<S>(storage: &mut S) -> Result<(), crate::storage::StorageError>
-    where
-        S: AuthClientStorage,
-    {
+    fn delete_storage_native(
+        storage: &mut dyn AuthClientStorage,
+    ) -> Result<(), crate::storage::StorageError> {
         storage.remove(KEY_STORAGE_KEY)?;
         storage.remove(KEY_STORAGE_DELEGATION)?;
         Ok(())
     }
+}
+
+#[cfg(feature = "pem")]
+fn sanitize_service_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+#[cfg(feature = "pem")]
+fn find_pem_file_in_directory(directory: &Path) -> Result<Option<PathBuf>, AuthClientError> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(AuthClientError::Storage(StorageError::File(e.to_string()))),
+    };
+
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| AuthClientError::Storage(StorageError::File(e.to_string())))?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ext.eq_ignore_ascii_case("pem") {
+                    return Ok(Some(path));
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
