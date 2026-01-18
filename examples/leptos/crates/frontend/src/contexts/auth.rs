@@ -18,6 +18,15 @@ use util::{
 mod backend;
 pub use backend::BackendActor;
 
+const IDENTITY_PROVIDER: &str = "https://id.ai";
+
+const AUTH_POPUP_HEIGHT: u32 = 625;
+const AUTH_POPUP_WIDTH: u32 = 576;
+
+// Guided upgrade flow (legacy users -> id.ai) requires:
+// const IDENTITY_PROVIDER: &str = "https://id.ai/?feature_flag_guided_upgrade=true";
+// const AUTH_POPUP_HEIGHT: u32 = 826;
+
 pub type AuthStore = Store<Auth>;
 
 #[allow(dead_code)]
@@ -88,6 +97,7 @@ impl Auth {
             };
 
             let options = AuthClientLoginOptions::builder()
+                .window_opener_features(popup_center(AUTH_POPUP_WIDTH, AUTH_POPUP_HEIGHT))
                 .on_success(on_success)
                 .on_error(on_error);
 
@@ -138,7 +148,7 @@ fn identity_provider() -> Option<String> {
         }
     }
 
-    None
+    Some(IDENTITY_PROVIDER.to_string())
 }
 
 #[component]
@@ -182,4 +192,16 @@ impl AuthStoreExt for AuthStore {
     fn logout(self) {
         Auth::logout(self);
     }
+}
+
+fn popup_center(width: u32, height: u32) -> String {
+    let screen_width = window().inner_width().unwrap().as_f64().unwrap() as u32;
+    let screen_height = window().inner_height().unwrap().as_f64().unwrap() as u32;
+
+    let left = (screen_width - width) / 2;
+    let top = (screen_height - height) / 2;
+
+    format!(
+        "toolbar=no, location=no, directories=no, status=no, menubar=no, scrollbars=yes, resizable=no, copyhistory=no, width={width}, height={height}, top={top}, left={left}"
+    )
 }
