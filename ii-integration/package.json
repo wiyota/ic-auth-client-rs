@@ -12,7 +12,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@perforate/ic-auth-bridge": "file:../ic-auth-bridge"
+    "@perforate/ic-auth-bridge": "^0.0.1"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
