@@ -12,3 +12,4 @@ candid.workspace = true
 ic-cdk = "0.19"
 ic-cdk-macros = "0.19"
 ic-stable-structures = "0.7"
+serde.workspace = true

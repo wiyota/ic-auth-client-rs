@@ -15,8 +15,18 @@ pub(crate) const TEXT_LINES_Y: f32 = 126.0;
 pub(crate) const TEXT_LEVEL_X: f32 = 248.0;
 pub(crate) const TEXT_LEVEL_Y: f32 = 202.0;
 
+pub(crate) const TEXT_PRINCIPAL_RIGHT: f32 = 8.0;
+pub(crate) const TEXT_PRINCIPAL_BOTTOM: f32 = 8.0;
+pub(crate) const LOGOUT_BUTTON_RIGHT: f32 = 8.0;
+pub(crate) const LOGOUT_BUTTON_BOTTOM: f32 = 36.0;
+
 pub(crate) const TEXT_GAME_X: f32 = 50.0;
-pub(crate) const TEXT_GAME_Y: f32 = 118.0;
+pub(crate) const TEXT_GAME_Y: f32 = 44.0;
+
+pub(crate) const TEXT_HIGHSCORES_TITLE_X: f32 = 50.0;
+pub(crate) const TEXT_HIGHSCORES_TITLE_Y: f32 = 140.0;
+pub(crate) const TEXT_HIGHSCORES_LINE_HEIGHT: f32 = 32.0;
+pub(crate) const TEXT_HIGHSCORES_STATUS_Y: f32 = 360.0;
 
 pub(crate) const BOARD_X: i8 = 10;
 pub(crate) const BOARD_Y: i8 = 23; // board is 10x20
@@ -39,7 +49,7 @@ pub(crate) const SCORE_PER_DROP: u32 = 10;
 
 // pub(crate) const STRING_GAME_START: &str = "PRESS SPACE";
 // pub(crate) const STRING_GAME_PLAYING: &str = "                         ";
-pub(crate) const STRING_LOGIN: &str = "   LOGIN   \n\nPRESS SPACE";
+// pub(crate) const STRING_LOGIN: &str = "   LOGIN   \n\nPRESS SPACE";
 pub(crate) const STRING_GAME_OVER: &str = " GAME OVER \n\nPRESS SPACE";
 
 //delay = 725 * .85 ^ level + level (ms)

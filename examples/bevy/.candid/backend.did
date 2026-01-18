@@ -1,1 +1,10 @@
-service : {}
+type ScoreEntry = record {
+  player : principal;
+  score : nat32;
+};
+
+service : {
+  get_leaderboard : (opt nat32) -> (vec ScoreEntry) query;
+  get_score : (principal) -> (opt ScoreEntry) query;
+  submit_score : (nat32) -> (ScoreEntry);
+}

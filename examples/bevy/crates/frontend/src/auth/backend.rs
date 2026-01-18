@@ -1,6 +1,7 @@
+use anyhow::{Context, Result, anyhow};
 use bevy::log::{debug, error};
 use candid::{CandidType, Decode, Encode};
-use ic_agent::{Agent, Identity};
+use ic_agent::{Agent, Identity, export::Principal};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use tokio::runtime::{Builder, Runtime};
@@ -10,6 +11,12 @@ use util::{
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60 * 5);
+
+#[derive(Debug, Clone, CandidType, Deserialize)]
+pub struct ScoreEntry {
+    pub player: Principal,
+    pub score: u32,
+}
 
 pub struct BackendActor {
     agent: Agent,
@@ -58,7 +65,7 @@ impl BackendActor {
         }
     }
 
-    async fn query<S, T>(&self, method: &'static str, arg: S) -> T
+    async fn query<S, T>(&self, method: &'static str, arg: S) -> Result<T>
     where
         S: CandidType + Send + 'static,
         T: CandidType + for<'de> Deserialize<'de> + Send + 'static,
@@ -80,19 +87,17 @@ impl BackendActor {
                 agent.query(&backend, method).with_arg(arg).await
             })
             .await
-            .expect("Query task panicked")
-            .unwrap_or_else(|e| {
+            .context("Backend query task failed to join")?
+            .map_err(|e| {
                 error!(method, canister = %backend, ?e, "Backend query failed");
-                panic!(
-                    "Failed to query call: canister_id: {}, method: {}, {:?}",
-                    backend, method, e
-                );
-            });
+                anyhow!("Failed to query backend: {e}")
+            })?;
 
-        Decode!(response.as_slice(), T).unwrap()
+        Decode!(response.as_slice(), T)
+            .map_err(|e| anyhow!("Failed to decode backend response for {method}: {e}"))
     }
 
-    async fn update<S, T>(&self, method: &'static str, arg: S) -> T
+    async fn update<S, T>(&self, method: &'static str, arg: S) -> Result<T>
     where
         S: CandidType + Send + 'static,
         T: CandidType + for<'de> Deserialize<'de> + Send + 'static,
@@ -114,15 +119,25 @@ impl BackendActor {
                 agent.update(&backend, method).with_arg(arg).await
             })
             .await
-            .expect("Update task panicked")
-            .unwrap_or_else(|e| {
+            .context("Backend update task failed to join")?
+            .map_err(|e| {
                 error!(method, canister = %backend, ?e, "Backend update failed");
-                panic!(
-                    "Failed to update call: canister_id: {}, method: {}, {:?}",
-                    backend, method, e
-                );
-            });
+                anyhow!("Failed to update backend: {e}")
+            })?;
 
-        Decode!(response.as_slice(), T).unwrap()
+        Decode!(response.as_slice(), T)
+            .map_err(|e| anyhow!("Failed to decode backend response for {method}: {e}"))
+    }
+
+    pub async fn submit_score(&self, score: u32) -> Result<ScoreEntry> {
+        self.update("submit_score", score).await
+    }
+
+    pub async fn get_score(&self, player: Principal) -> Result<Option<ScoreEntry>> {
+        self.query("get_score", player).await
+    }
+
+    pub async fn get_leaderboard(&self, limit: Option<u32>) -> Result<Vec<ScoreEntry>> {
+        self.query("get_leaderboard", limit).await
     }
 }

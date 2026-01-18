@@ -1,12 +1,12 @@
 {
-  "name": "ii_integration",
+  "name": "bevy-ii-integration",
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "dev": "npm run dev -w ii_integration",
-    "build": "npm run build -w ii_integration"
+    "dev": "npm run dev -w ii-integration",
+    "build": "npm run build -w ii-integration"
   },
   "workspaces": [
-    "ii_integration"
+    "ii-integration"
   ]
 }

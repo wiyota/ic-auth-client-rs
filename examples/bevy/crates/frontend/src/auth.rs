@@ -12,17 +12,23 @@ use std::sync::Arc;
 use util::{canister_id::II_INTEGRATION, dfx_network::is_local_dfx};
 
 mod backend;
-pub use backend::BackendActor;
+pub use backend::{BackendActor, ScoreEntry};
 
 #[derive(Debug, Clone)]
+pub enum AuthSignal {
+    LoginComplete,
+    LoginFailed,
+}
+
 pub struct Signal {
-    rx: Receiver<()>,
-    tx: Sender<()>,
+    rx: Receiver<AuthSignal>,
+    tx: Sender<AuthSignal>,
 }
 
 #[derive(Resource, Debug, Clone, PartialEq, Default)]
 pub enum AuthState {
     Authenticated(Principal),
+    Authenticating,
     #[default]
     Unauthenticated,
 }
@@ -64,21 +70,24 @@ impl Auth {
         })
     }
 
-    pub fn login(&self) -> Result<()> {
+    pub fn login(&mut self) -> Result<()> {
         info!("Starting Internet Identity login flow");
+        self.state = AuthState::Authenticating;
 
         let identity_tx = self.identity_signal.tx.clone();
+        let success_tx = identity_tx.clone();
         let on_success = move |res: AuthResponseSuccess| {
             info!(
                 auth_method = res.authn_method,
                 delegations = res.delegations.len(),
                 "Login successful, waiting for state sync"
             );
-            let _ = identity_tx.send(());
+            let _ = success_tx.send(AuthSignal::LoginComplete);
         };
 
         let on_error = move |err: Option<String>| {
             error!(?err, "Internet Identity login failed");
+            let _ = identity_tx.send(AuthSignal::LoginFailed);
         };
 
         let options = AuthClientLoginOptions::builder()
@@ -111,10 +120,22 @@ impl Auth {
     }
 
     pub fn update_state_signal(&mut self) {
-        if self.identity_signal.rx.try_recv().is_ok() {
-            debug!("Received login-complete signal");
-            self.update_state();
+        if let Ok(signal) = self.identity_signal.rx.try_recv() {
+            match signal {
+                AuthSignal::LoginComplete => {
+                    debug!("Received login-complete signal");
+                    self.update_state();
+                }
+                AuthSignal::LoginFailed => {
+                    debug!("Received login-failed signal");
+                    self.state = AuthState::Unauthenticated;
+                }
+            }
         }
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.auth_client.is_authenticated()
     }
 }
 

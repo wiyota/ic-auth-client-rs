@@ -6,11 +6,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-bevy = { version = "0.17" }
+bevy = { version = "0.18" }
 candid.workspace = true
-flume = "0.11"
+flume = "0.12"
 haalka = "0.5.1"
-ic-agent = "0.44"
+ic-agent = "0.45"
 ic-auth-client = { path = "../../../../", default-features = false, features = [
     "keyring",
     "native",
@@ -20,8 +20,9 @@ keyring = "3.6"
 lazy_static = "1.5"
 rand = "0.9"
 serde.workspace = true
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }
 util.workspace = true
+futures-lite = "2.6"
 
 # Enable only a small amount of optimization in debug mode
 [profile.dev]
