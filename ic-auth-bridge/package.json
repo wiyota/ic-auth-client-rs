@@ -4,6 +4,17 @@
   "description": "Internet Identity integration helpers for native ic-auth-client",
   "type": "module",
   "license": "Apache-2.0 OR MIT",
+  "keywords": [
+    "internet computer",
+    "internet-computer",
+    "ic",
+    "internet identity",
+    "authentication",
+    "crypto",
+    "distributed",
+    "api"
+  ],
+  "author": "Yota Inomoto <yota@perforate.org> (https://github.com/wiyota/)",
   "files": [
     "dist"
   ],
