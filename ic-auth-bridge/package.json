@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "Internet Identity integration helpers for native ic-auth-client",
   "type": "module",
-  "license": "Apache-2.0 or MIT",
+  "license": "Apache-2.0 OR MIT",
   "files": [
     "dist"
   ],
