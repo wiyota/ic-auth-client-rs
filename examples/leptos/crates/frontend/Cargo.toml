@@ -31,14 +31,14 @@ console_error_panic_hook = "0.1.7"
 domain = { workspace = true, features = ["dto"] }
 futures = { version = "0.3.31", default-features = false }
 getrandom = { version = "0.3", features = ["wasm_js"] }
-ic-agent = { version = "0.44", default-features = false, features = [
+ic-agent = { version = "0.45", default-features = false, features = [
     "wasm-bindgen",
 ] }
 ic-auth-client = { path = "../../../../", features = ["tracing"] }
-leptos = { version = "0.8.12", features = ["csr"] }
-leptos-fetch = "0.4.7"
+leptos = { version = "0.8.15", features = ["csr"] }
+leptos-fetch = "0.4.9"
 leptos_meta = "0.8.5"
-leptos_router = "0.8.9"
+leptos_router = "0.8.11"
 reactive_stores = "0.3"
 serde.workspace = true
 tracing-wasm = "0.2.1"
