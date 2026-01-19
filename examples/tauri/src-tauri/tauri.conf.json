@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ic-auth-client-tauri",
+  "version": "0.0.1",
+  "identifier": "com.example.ic-auth-client-tauri",
+  "build": {
+    "devUrl": "http://localhost:8080",
+    "frontendDist": "../crates/frontend/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "IC Auth Client (Tauri)",
+        "width": 1280,
+        "height": 800,
+        "create": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true
+  }
+}
