@@ -4,8 +4,6 @@ Port of [@dfinity/auth-client](https://www.npmjs.com/package/@dfinity/auth-clien
 
 This is a crate for developers who build the frontend of applications for Internet Computer using Rust as the primary language.
 
-If you use JavaScript for frontend, you can use the Internet Identity Service compatible libraries such as [@dfinity/auth-client](https://www.npmjs.com/package/@dfinity/auth-client) or [@nfid/identitykit](https://www.npmjs.com/package/@nfid/identitykit).
-
 ## Version compatibility for `ic-agent`
 
 The table below shows the compatible versions of `ic-auth-client` for `ic-agent` versions.
@@ -18,7 +16,7 @@ The table below shows the compatible versions of `ic-auth-client` for `ic-agent`
 
 ## Quick Start
 
-### In the browser:
+### Web frontend (browser/WebView)
 
 ```rust
 use ic_auth_client::AuthClient;
@@ -61,14 +59,14 @@ let agent = Agent::builder()
     .build()?;
 ```
 
-## Native (non-WebView) frontend
+### Native frontend (non-WebView)
 
-When using Internet Identity in a native frontend that is not a WebView, there are several differences.
+When using Internet Identity in a native frontend that is not a WebView, there are a few differences.
 
 - Using OS-specific APIs instead of WebAPIs via JavaScript.
 - Internet Identity issues different credentials for each website, so a website is required for authentication requests.
 
-### Implementation
+#### Setup
 
 1. Set `default-features` to `false` and enable the `native` feature and one of `keyring` or `pem`.
 
@@ -84,6 +82,14 @@ use ic_auth_client::NativeAuthClient as AuthClient;
 // You need a unique service name that will be used by the OS-native secure store
 let auth_client = AuthClient::new("your-app")?;
 ```
+
+#### Internet Identity flow for native apps
+
+1. Your native app calls `NativeAuthClient::login`, which returns a URL to open in the system browser.
+2. That browser page must run a small bridge script that completes II auth and posts the result back to the native callback URL.
+3. The native app receives the payload and finishes the login.
+
+For step 2, use `@perforate/ic-auth-bridge` (see `ic-auth-bridge/README.md`) or start from the packaged template in `ii-integration/` (or see the [Bevy](https://bevy.org/) example at `examples/bevy/`) and copy it into your app or canister frontend. The template already wires the bridge, so you only need to host it and point `NativeAuthClient::login` at it.
 
 ## License
 

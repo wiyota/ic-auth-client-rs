@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Public API types (`InternetIdentityAuthRequest`, `IdentityServiceResponseMessage`, `IdentityServiceResponseKind`) for external usage
 - Native app implementations for `auth_client`, `idle_manager`, and `storage` modules
 - Native app support via OS-level integrations (`keyring`, `chrono`, `url`)
+- Public API types (`InternetIdentityAuthRequest`, `IdentityServiceResponseMessage`, `IdentityServiceResponseKind`) for external usage
 
 ### Changed
 
+- **BREAKING**: Updated `ic-agent` dependency to **v0.45**.
 - **BREAKING**: Restructured codebase with platform-specific modules (`auth_client`, `idle_manager`, `storage`)
 - **BREAKING**: WASM-specific dependencies (`gloo-*`, `web-sys`) now optional behind `wasm-js` feature flag
 - **BREAKING**: `AuthClient` methods `login()` and `logout()` now use `&self` instead of `&mut self`
