@@ -1,6 +1,6 @@
 #![cfg_attr(not(doctest), doc = include_str!("../README.md"))]
 #![warn(missing_docs)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #![doc = document_features::document_features!()]
 
