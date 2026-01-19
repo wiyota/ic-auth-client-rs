@@ -39,3 +39,7 @@ identityProvider: "https://id.ai/?feature_flag_guided_upgrade=true";
 - `index.html`: login page markup
 - `src/index.ts`: login flow and identity provider resolution
 - `assets/`: static assets (logo)
+
+## License
+
+This project is licensed under either of [Apache License, Version 2.0](./LICENSE-APACHE) or [MIT License](./LICENSE-MIT) at your option.

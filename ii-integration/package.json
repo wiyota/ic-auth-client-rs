@@ -10,7 +10,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "MIT",
+  "license": "Apache-2.0 OR MIT",
   "dependencies": {
     "@perforate/ic-auth-bridge": "^0.0.1"
   },
