@@ -31,10 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom `sleep` utility module (replaced by `gloo-timers`)
 - Thread-local HashMap storage for authentication resources
 
-### Refactored
-
-- All remaining `unwrap()` calls replaced with proper error handling
-
 ### Dependencies
 
 - Added: `parking_lot`, `futures`, native-specific dependencies (`keyring`, `chrono`, `url`)
