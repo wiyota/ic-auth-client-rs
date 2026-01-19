@@ -81,5 +81,6 @@ ic-auth-client = { version = "*.*.*", default-features = false, features = ["key
 ```rust
 use ic_auth_client::NativeAuthClient as AuthClient;
 
-let auth_client = AuthClient::new("native_app")?;
+// You need a unique service name that will be used by the OS-native secure store
+let auth_client = AuthClient::new("your-app")?;
 ```
