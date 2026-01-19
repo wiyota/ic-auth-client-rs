@@ -1,6 +1,6 @@
 # ic-auth-client
 
-Port of [@dfinity/auth-client](https://www.npmjs.com/package/@dfinity/auth-client) for the Rust programming language.
+Port of [@icp-sdk/auth](https://www.npmjs.com/package/@icp-sdk/auth) for the Rust programming language.
 
 This is a crate for developers who build the frontend of applications for Internet Computer using Rust as the primary language.
 
