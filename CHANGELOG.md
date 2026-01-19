@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `on_success_async` and `on_error_async` for handling asynchronous closures in `AuthClientLoginOptions`
 - Public API types (`InternetIdentityAuthRequest`, `IdentityServiceResponseMessage`, `IdentityServiceResponseKind`) for external usage
-- `parking_lot` dependency for improved mutex performance
+- Native app implementations for `auth_client`, `idle_manager`, and `storage` modules
+- Native app support via OS-level integrations (`keyring`, `chrono`, `url`)
 
 ### Changed
 
@@ -23,11 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `on_success` and `on_error` can now be used with both synchronous and asynchronous closures
 - Improved resource management in WASM with RAII pattern using `ActiveLogin` struct
 - Replaced custom sleep utility with `gloo-timers` for better async compatibility
+- Aligned native app flow with platform-agnostic interfaces
 
 ### Removed
 
 - Custom `sleep` utility module (replaced by `gloo-timers`)
 - Thread-local HashMap storage for authentication resources
+
+### Refactored
+
 - All remaining `unwrap()` calls replaced with proper error handling
 
 ### Dependencies
