@@ -1,0 +1,29 @@
+{
+  "canisters": {
+    "backend": {
+      "candid": ".candid/backend.did",
+      "package": "backend",
+      "type": "rust"
+    },
+    "ii-integration": {
+      "type": "assets",
+      "frontend": {
+        "entrypoint": "ii-integration/dist/index.html"
+      },
+      "source": ["ii-integration/dist"],
+      "build": ["cd ii-integration && npm run build"]
+    },
+    "internet-identity": {
+      "type": "pull",
+      "id": "rdmx6-jaaaa-aaaaa-aaadq-cai"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

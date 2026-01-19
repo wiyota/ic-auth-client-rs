@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/backend", "crates/domain", "crates/frontend", "crates/util", "tw-sample/tw-sample"]
+resolver = "2"
+
+[workspace.dependencies]
+domain = { path = "crates/domain" }
+util = { path = "crates/util" }
+
+candid = { version = "0.10", default-features = false }
+ic-stable-structures = "0.7.2"
+serde = { version = "1.0", features = ["derive"] }
