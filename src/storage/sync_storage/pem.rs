@@ -31,6 +31,14 @@ pub struct PemStorage {
 
 impl PemStorage {
     /// Creates a new instance of [`PemStorage`].
+    ///
+    /// # Arguments
+    ///
+    /// * `directory` - The directory where the storage files will be stored.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of [`PemStorage`].
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
     }
@@ -290,6 +298,48 @@ mod tests {
         storage.remove("delegation").expect("remove");
         let after_remove = storage.get("delegation").expect("read missing");
         assert!(after_remove.is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pem_storage_persists_identity_as_pem() {
+        let dir = temp_directory();
+        let mut storage = PemStorage::new(dir.clone());
+        let key = [7u8; 32];
+        storage
+            .set(KEY_STORAGE_KEY, StoredKey::from(key))
+            .expect("store key");
+        let retrieved = storage
+            .get(KEY_STORAGE_KEY)
+            .expect("read key")
+            .expect("missing key");
+        assert_eq!(retrieved.decode().unwrap(), key);
+        let pem_key = storage
+            .read_private_key_pem()
+            .expect("read pem")
+            .expect("missing pem");
+        assert_eq!(pem_key, key);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pem_storage_migrates_legacy_identity_json() {
+        let dir = temp_directory();
+        let mut storage = PemStorage::new(dir.clone());
+        let key = [9u8; 32];
+        storage
+            .write_json_value(KEY_STORAGE_KEY, StoredKey::from(key))
+            .expect("write legacy json");
+        let legacy_path = storage.file_path(KEY_STORAGE_KEY);
+        assert!(legacy_path.exists());
+
+        let retrieved = storage
+            .get(KEY_STORAGE_KEY)
+            .expect("read key")
+            .expect("missing key");
+        assert_eq!(retrieved.decode().unwrap(), key);
+        assert!(storage.key_file_path().exists());
+        assert!(!legacy_path.exists());
         let _ = fs::remove_dir_all(dir);
     }
 }
