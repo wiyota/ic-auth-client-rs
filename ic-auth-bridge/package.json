@@ -17,10 +17,10 @@
   "author": "Yota Inomoto <yota@perforate.org> (https://github.com/wiyota/)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wiyota/ic-auth-client-rs.git"
+    "url": "https://github.com/perforate-org/ic-auth-client-rs.git"
   },
   "bugs": {
-    "url": "https://github.com/wiyota/ic-auth-client-rs/issues"
+    "url": "https://github.com/perforate-org/ic-auth-client-rs/issues"
   },
   "files": [
     "dist"

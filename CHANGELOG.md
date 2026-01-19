@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.5.0-beta.0] - 2026-01-19
+
 ### Added
 
 - Native app implementations for `auth_client`, `idle_manager`, and `storage` modules

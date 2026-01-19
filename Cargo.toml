@@ -1,6 +1,6 @@
 [package]
 name = "ic-auth-client"
-version = "0.4.1"
+version = "0.5.0-beta.0"
 authors = ["Inomoto, Yota <yota@perforate.org>"]
 license = "Apache-2.0"
 edition = "2024"
@@ -10,7 +10,7 @@ description = "A client library for Internet Computer identity authentication se
 include = ["/src", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 documentation = "https://docs.rs/ic-auth-client/"
-repository = "https://github.com/wiyota/ic-auth-client-rs/"
+repository = "https://github.com/perforate-org/ic-auth-client-rs/"
 
 readme = "README.md"
 
