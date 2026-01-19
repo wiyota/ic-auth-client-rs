@@ -24,6 +24,9 @@ canister_ids.json
 # canbench
 **/.canbench/
 
+# pem
+pem/
+
 # Various IDEs and Editors
 .vscode/
 .idea/

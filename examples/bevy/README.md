@@ -31,6 +31,23 @@ for this Internet Identity example.
    The game window will display a login overlay. Clicking “IIでログイン” opens
    Internet Identity; after authenticating, the game transitions into play.
 
+### Storage backend
+
+- Keyring (default):
+  ```bash
+  cargo run -p frontend --features storage-keyring
+  ```
+- PEM (file-based):
+  ```bash
+  IC_AUTH_CLIENT_STORAGE=pem \
+    IC_AUTH_CLIENT_PEM_DIR=/path/to/pem-store \
+    cargo run -p frontend --no-default-features --features storage-pem
+  ```
+  If `IC_AUTH_CLIENT_PEM_DIR` is not set, the example uses `./pem` relative to
+  `examples/bevy/crates/frontend`.
+  If both storage features are enabled, `IC_AUTH_CLIENT_STORAGE` selects the
+  backend (`keyring` or `pem`).
+
 ## Troubleshooting
 
 - Enable verbose logs via `RUST_LOG="frontend=debug,ic_auth_client=trace"` to

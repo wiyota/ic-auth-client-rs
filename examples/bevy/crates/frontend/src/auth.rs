@@ -8,7 +8,7 @@ use ic_agent::{Identity, export::Principal};
 use ic_auth_client::{
     AuthClientLoginOptions, NativeAuthClient as AuthClient, api::AuthResponseSuccess,
 };
-use std::sync::Arc;
+use std::{env, path::PathBuf, sync::Arc};
 use util::{canister_id::II_INTEGRATION, dfx_network::is_local_dfx};
 
 mod backend;
@@ -45,7 +45,7 @@ pub struct Auth {
 impl Auth {
     pub fn new() -> Result<Self> {
         info!("Initializing authentication client");
-        let auth_client = AuthClient::new("bevy_example")?;
+        let auth_client = build_auth_client()?;
         let state = if auth_client.is_authenticated() {
             let principal = auth_client.principal().unwrap();
             info!(%principal, "Existing Internet Identity session detected");
@@ -137,6 +137,50 @@ impl Auth {
     pub fn is_authenticated(&self) -> bool {
         self.auth_client.is_authenticated()
     }
+}
+
+fn build_auth_client() -> Result<AuthClient> {
+    #[cfg(all(feature = "storage-keyring", feature = "storage-pem"))]
+    {
+        let selection = env::var("IC_AUTH_CLIENT_STORAGE")
+            .unwrap_or_else(|_| "keyring".to_string())
+            .to_lowercase();
+        match selection.as_str() {
+            "pem" => build_pem_auth_client(),
+            _ => build_keyring_auth_client(),
+        }
+    }
+
+    #[cfg(all(feature = "storage-keyring", not(feature = "storage-pem")))]
+    {
+        build_keyring_auth_client()
+    }
+
+    #[cfg(all(feature = "storage-pem", not(feature = "storage-keyring")))]
+    {
+        build_pem_auth_client()
+    }
+}
+
+#[cfg(feature = "storage-keyring")]
+fn build_keyring_auth_client() -> Result<AuthClient> {
+    Ok(AuthClient::new("bevy_example")?)
+}
+
+#[cfg(feature = "storage-pem")]
+fn build_pem_auth_client() -> Result<AuthClient> {
+    let directory = env::var("IC_AUTH_CLIENT_PEM_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("pem")
+        });
+    info!(?directory, "Using PEM storage directory");
+    Ok(AuthClient::new_with_pem_directory(
+        "bevy_example",
+        directory,
+    )?)
 }
 
 fn ii_integration() -> String {

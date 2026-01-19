@@ -12,17 +12,21 @@ flume = "0.12"
 haalka = "0.5.1"
 ic-agent = "0.45"
 ic-auth-client = { path = "../../../../", default-features = false, features = [
-    "keyring",
     "native",
     "tracing",
 ] }
-keyring = "3.6"
+keyring = { version = "3.6", optional = true }
 lazy_static = "1.5"
 rand = "0.9"
 serde.workspace = true
 tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }
 util.workspace = true
 futures-lite = "2.6"
+
+[features]
+default = ["storage-keyring"]
+storage-keyring = ["dep:keyring", "ic-auth-client/keyring"]
+storage-pem = ["ic-auth-client/pem"]
 
 # Enable only a small amount of optimization in debug mode
 [profile.dev]

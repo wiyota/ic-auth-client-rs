@@ -27,8 +27,15 @@ use ic_agent::export::Principal;
 use auth::{Auth, AuthState, BackendActor, ScoreEntry};
 use bricks::{Board, Brick, BrickShape, Dot};
 use consts::*;
-use keyring::set_default_credential_builder;
 use std::{env, time::Duration};
+
+#[cfg(not(any(feature = "storage-keyring", feature = "storage-pem")))]
+compile_error!(
+    "Enable one storage feature: storage-keyring or storage-pem (use --no-default-features as needed)."
+);
+
+#[cfg(feature = "storage-keyring")]
+use keyring::set_default_credential_builder;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
 enum GameState {
@@ -47,6 +54,7 @@ fn transition_to_playing(mut app_state: ResMut<NextState<GameState>>, auth_state
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "storage-keyring")]
     if util::dfx_network::is_local_dfx() {
         set_default_credential_builder(keyring::mock::default_credential_builder());
     }
