@@ -70,14 +70,16 @@ When using Internet Identity in a native frontend that is not a WebView, there a
 
 ### Implementation
 
-1. Set `default-features` to `false` and enable the `native` feature.
+1. Set `default-features` to `false` and enable the `native` feature and one of `keyring` or `pem`.
 
 ```toml
-ic-auth-client = { version = "*.*.*", default-features = false, features = ["native"] }
+ic-auth-client = { version = "*.*.*", default-features = false, features = ["keyring", "native"] }
 ```
 
-2. Use "native" constructors like `AuthClient::new_native()` instead of `AuthClient::new()`.
+2. Use "native" constructors.
 
 ```rust
+use ic_auth_client::NativeAuthClient as AuthClient;
 
+let auth_client = AuthClient::new("native_app")?;
 ```
