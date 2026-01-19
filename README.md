@@ -84,3 +84,7 @@ use ic_auth_client::NativeAuthClient as AuthClient;
 // You need a unique service name that will be used by the OS-native secure store
 let auth_client = AuthClient::new("your-app")?;
 ```
+
+## License
+
+This project is licensed under [Apache License, Version 2.0](./LICENSE-APACHE).
