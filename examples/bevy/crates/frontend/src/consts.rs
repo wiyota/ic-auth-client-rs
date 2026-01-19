@@ -1,3 +1,8 @@
+// Adapted from bevy-tetris (GPLv3).
+// Copyright (C) corbamico@163.com
+// Modifications for this example are licensed under GPLv3.
+// See LICENSE and NOTICE.md.
+
 use crate::Color;
 use crate::bricks::{Brick, Dot};
 use lazy_static::*;

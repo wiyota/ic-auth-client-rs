@@ -1,3 +1,8 @@
+// Portions of this file are adapted from bevy-tetris (GPLv3).
+// Copyright (C) corbamico@163.com
+// Modifications for this example are licensed under GPLv3.
+// See LICENSE and NOTICE.md.
+
 //! This example demonstrates how to use the `ic-auth-client` with the Bevy game engine.
 //! It features a simple UI that allows users to log in and log out, displaying their principal ID when authenticated.
 

@@ -1,3 +1,8 @@
+// Adapted from bevy-tetris (GPLv3).
+// Copyright (C) corbamico@163.com
+// Modifications for this example are licensed under GPLv3.
+// See LICENSE and NOTICE.md.
+
 use crate::consts::{BOARD_X, BOARD_X_Y, BOARD_Y, BOARD_Y_VALIDE, BRICKS_DICT, BRICKS_TYPES};
 use bevy::prelude::Resource;
 use rand::prelude::*;

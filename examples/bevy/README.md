@@ -45,3 +45,11 @@ for this Internet Identity example.
 - GPLv3, Copyright by corbamico@163.com
 - Assets `digital7mono.ttf`: TrueType Fonts — DIGITAL-7 version 1.02 (by
   Sizenko Alexander, Style-7)
+
+### Scope and compliance notes
+
+- This example includes GPLv3-licensed code adapted from bevy-tetris; as a
+  result, this example is distributed under GPLv3. See `LICENSE` and
+  `NOTICE.md`.
+- When distributing binaries, provide the corresponding source code and the
+  GPLv3 license text alongside the distribution.
