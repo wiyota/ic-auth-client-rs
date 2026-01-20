@@ -6,11 +6,11 @@ native Bevy application. The gameplay logic borrows pieces of
 [bevy-tetris](https://github.com/corbamico/bevy-tetris), adapted specifically
 for this Internet Identity example.
 
-## Requirements
+## Prerequisites
 
-- Rust toolchain (1.78+ recommended)
-- `dfx` 0.24+ running locally for the backend/II integration canisters
-- Node.js 22.12+ (needed to build `ii_integration`)
+- [Rust](https://www.rust-lang.org/)
+- [IC SDK](https://github.com/dfinity/sdk)
+- [Node.js](https://nodejs.org/ja/)
 
 ## Running Locally
 
