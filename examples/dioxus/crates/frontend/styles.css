@@ -1,0 +1,33 @@
+@source "../src/**/*.{rs,html,css}";
+@import "tailwindcss";
+@plugin "daisyui" {
+    themes: corporate --default;
+}
+@plugin "daisyui/theme" {
+    name: "dark";
+    prefersdark: true;
+    --color-primary: oklch(0.546 0.245 262.881);
+}
+
+@custom-variant hover {
+    @media (hover: hover) and (pointer: fine) {
+        &:hover {
+            @slot;
+        }
+    }
+}
+
+html {
+    font-family: var(--font-sans);
+}
+
+a,
+button,
+[role="button"] {
+    cursor: default;
+}
+
+code,
+pre {
+    font-family: var(--font-mono);
+}
