@@ -133,6 +133,10 @@ impl Auth {
         false
     }
 
+    pub fn signal_receiver(&self) -> Receiver<AuthSignal> {
+        self.identity_signal.rx.clone()
+    }
+
     pub fn is_authenticated(&self) -> bool {
         self.auth_client.is_authenticated()
     }

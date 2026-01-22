@@ -5,9 +5,9 @@ by the Internet Computer.
 
 ## Requirements
 
-- Rust toolchain (1.78+ recommended)
-- `dfx` 0.24+ running locally for the backend/II integration canisters
-- Node.js 22.12+ (needed to build `ii-integration`)
+- Rust toolchain
+- `dfx` running locally for the backend/II integration canisters
+- Node.js (needed to build `ii-integration`)
 
 ## Running Locally
 

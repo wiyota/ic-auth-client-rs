@@ -13,10 +13,13 @@ First, in one terminal, start the local PocketIC:
 dfx start
 ```
 
-Then, in a second terminal, deploy your canisters and start the Dioxus development server:
+Then, in a second terminal, deploy your canisters and start the Dioxus development server.
+Tailwind watch also needs its own terminal while running, so use a third terminal for it:
 
 ```bash
 make deploy
+
+make tailwind-watch
 
 dx serve --platform web -p frontend
 ```

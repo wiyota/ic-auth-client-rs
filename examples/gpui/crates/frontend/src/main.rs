@@ -1,12 +1,17 @@
 use anyhow::Result;
 use gpui::prelude::*;
-use gpui::{App, Application, Context, Entity, Render, WeakEntity, Window, WindowOptions, div};
+use gpui::{
+    App, Application, Axis, Context, Entity, Render, WeakEntity, Window, WindowOptions, div, px,
+    rems,
+};
+use gpui_component::button::ButtonVariants;
 use gpui_component::{
-    Root,
+    ActiveTheme, Root, Sizable, StyledExt,
     button::Button,
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputState},
+    scroll::ScrollableElement,
     v_flex,
 };
 use keyring::set_default_credential_builder;
@@ -14,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 
 mod auth;
 
-use auth::{Auth, AuthState, TodoItem};
+use auth::{Auth, AuthSignal, AuthState, TodoItem};
 
 fn main() {
     if util::dfx_network::is_local_dfx() {
@@ -32,10 +37,19 @@ fn run() -> Result<()> {
 
     Application::new().run(|cx: &mut App| {
         gpui_component::init(cx);
-        cx.open_window(WindowOptions::default(), |window, cx| {
-            let app_view = cx.new(|cx| TodoApp::new(window, cx));
-            cx.new(|cx| Root::new(app_view, window, cx))
-        })
+        let window_bounds =
+            gpui::WindowBounds::centered(gpui::Size::new(800.0.into(), 600.0.into()), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(window_bounds),
+                ..WindowOptions::default()
+            },
+            |window, cx| {
+                let app_view = cx.new(|cx| TodoApp::new(window, cx));
+                app_view.update(cx, |view, cx| view.start_signal_listener(cx));
+                cx.new(|cx| Root::new(app_view, window, cx))
+            },
+        )
         .expect("Failed to open window");
         cx.activate(true);
     });
@@ -49,31 +63,52 @@ struct TodoApp {
     draft_input: Entity<InputState>,
     status: String,
     error: Option<String>,
+    needs_focus: bool,
+    window_handle: gpui::AnyWindowHandle,
 }
 
 impl TodoApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let auth = Auth::new().expect("Failed to initialize auth client");
         let draft_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add a new todo"));
+        let window_handle = window.window_handle();
         Self {
             auth,
             todos: Vec::new(),
             draft_input,
             status: "Ready".to_string(),
             error: None,
+            needs_focus: false,
+            window_handle,
         }
     }
 
-    fn sync_auth_state(&mut self, cx: &mut Context<Self>) {
-        if self.auth.update_state_signal() {
-            match self.auth.state {
-                AuthState::Authenticated(_) => self.refresh_todos(cx),
-                AuthState::Unauthenticated => {
-                    self.todos.clear();
-                }
-                AuthState::Authenticating => {}
+    fn start_signal_listener(&mut self, cx: &mut Context<Self>) {
+        let signal_rx = self.auth.signal_receiver();
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            while let Ok(signal) = signal_rx.recv_async().await {
+                this.update(cx, |view, cx| match signal {
+                    AuthSignal::LoginComplete => {
+                        view.auth.update_state();
+                        view.needs_focus = true;
+                        view.refresh_todos(cx);
+                    }
+                    AuthSignal::LoginFailed => {
+                        view.auth.state = AuthState::Unauthenticated;
+                        view.status = "Login failed".to_string();
+                    }
+                })
+                .ok();
+
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    cx.activate(true);
+                    window.activate_window();
+                    window.refresh();
+                });
             }
-        }
+        })
+        .detach();
     }
 
     fn refresh_todos(&mut self, cx: &mut Context<Self>) {
@@ -98,13 +133,11 @@ impl TodoApp {
         .detach();
     }
 
-    fn login(&mut self, cx: &mut Context<Self>) {
+    fn login(&mut self, _cx: &mut Context<Self>) {
         self.status = "Opening Internet Identity...".to_string();
         if let Err(err) = self.auth.login() {
             self.error = Some(format!("Login failed: {err}"));
             self.status = "Error".to_string();
-        } else {
-            self.sync_auth_state(cx);
         }
     }
 
@@ -208,9 +241,17 @@ impl TodoApp {
         let id = item.id;
         let completed = item.completed;
         let text = item.text.clone();
+        let text_label = div().child(text).flex_grow().when(completed, |this| {
+            this.text_color(cx.theme().muted_foreground).line_through()
+        });
 
         h_flex()
             .gap_2()
+            .w_full()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .p_2()
             .child(
                 Checkbox::new(("todo", id))
                     .checked(completed)
@@ -218,63 +259,133 @@ impl TodoApp {
                         view.toggle_todo(cx, id);
                     })),
             )
-            .child(div().child(text))
+            .child(text_label)
             .child(
-                Button::new("Delete").on_click(cx.listener(move |view, _event, _window, cx| {
-                    view.delete_todo(cx, id);
-                })),
+                Button::new("delete")
+                    .label("Delete")
+                    .xsmall()
+                    .danger()
+                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                        view.delete_todo(cx, id);
+                    })),
             )
     }
 }
 
 impl Render for TodoApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        self.sync_auth_state(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        if self.needs_focus {
+            self.needs_focus = false;
+            cx.activate(true);
+            window.activate_window();
+        }
 
-        let header = div().child("IC GPUI APP");
-        let status = div().child(self.status.clone());
-        let error = self
-            .error
-            .as_ref()
-            .map(|err| div().child(err.clone()))
-            .unwrap_or_else(|| div());
+        let header = div()
+            .text_3xl()
+            .font_semibold()
+            .text_center()
+            .child("ic-auth-client for Rust Example");
+        let status = div()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(self.status.clone());
+        let error = self.error.as_ref().map(|err| {
+            div()
+                .text_sm()
+                .text_color(cx.theme().danger_foreground)
+                .child(err.clone())
+        });
 
         let auth_controls = match &self.auth.state {
-            AuthState::Authenticated(principal) => h_flex()
+            AuthState::Authenticated(principal) => v_flex()
                 .gap_2()
-                .child(div().child(format!("Logged in: {principal}")))
-                .child(Button::new("Logout").on_click(cx.listener(
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("You're logged in: {principal}")),
+                )
+                .child(Button::new("logout").label("Logout").on_click(cx.listener(
                     |view, _event, _window, _cx| {
                         view.logout();
                     },
                 ))),
-            AuthState::Authenticating => h_flex().child(div().child("Logging in...")),
-            AuthState::Unauthenticated => h_flex().gap_2().child(
-                Button::new("Log in with II")
-                    .on_click(cx.listener(|view, _event, _window, cx| view.login(cx))),
-            ),
+            AuthState::Unauthenticated | AuthState::Authenticating => v_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("You're NOT logged in"),
+                )
+                .child(
+                    Button::new("login")
+                        .label("Log in with II")
+                        .info()
+                        .on_click(cx.listener(|view, _event, _window, cx| view.login(cx))),
+                ),
         };
 
-        let input_row = h_flex().gap_2().child(Input::new(&self.draft_input)).child(
-            Button::new("Add").on_click(cx.listener(|view, _event, window, cx| {
-                view.add_todo(window, cx);
-            })),
-        );
+        let todo_panel = if matches!(&self.auth.state, AuthState::Authenticated(_)) {
+            let window_height = f32::from(window.bounds().size.height);
+            let list_max_height = px((window_height - 320.0).max(160.0));
+            let input_row =
+                h_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(Input::new(&self.draft_input).flex_grow())
+                    .child(Button::new("add").label("Add").info().on_click(
+                        cx.listener(|view, _event, window, cx| view.add_todo(window, cx)),
+                    ));
 
-        let todo_list = v_flex().gap_1p5().children(
-            self.todos
-                .iter()
-                .map(|item| self.render_todo_row(cx, item))
-                .collect::<Vec<_>>(),
-        );
+            let todo_list = v_flex().gap_2().w_full().children(
+                self.todos
+                    .iter()
+                    .map(|item| self.render_todo_row(cx, item))
+                    .collect::<Vec<_>>(),
+            );
+            let todo_list = div()
+                .w_full()
+                .max_h(list_max_height)
+                .child(todo_list)
+                .overflow_y_scrollbar();
+
+            Some(
+                v_flex()
+                    .gap_3()
+                    .w_full()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().muted.opacity(0.25))
+                    .rounded(cx.theme().radius)
+                    .p_4()
+                    .child(input_row)
+                    .child(todo_list)
+                    .child(status)
+                    .when_some(error, |this, error| this.child(error)),
+            )
+        } else {
+            None
+        };
 
         v_flex()
-            .gap_3()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_6()
+            .p_8()
             .child(header)
-            .child(auth_controls)
-            .child(status)
-            .child(error)
-            .child(input_row)
-            .child(todo_list)
+            .child(
+                v_flex()
+                    .gap_4()
+                    .items_center()
+                    .text_center()
+                    .w_full()
+                    .max_w(rems(60.))
+                    .child(auth_controls)
+                    .when_some(todo_panel, |this, panel| this.child(panel)),
+            )
     }
 }
