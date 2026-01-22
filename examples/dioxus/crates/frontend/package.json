@@ -1,0 +1,14 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "tailwind:build": "npx @tailwindcss/cli -i ./styles.css -o ./public/main.css",
+    "tailwind:watch": "npx @tailwindcss/cli -i ./styles.css -o ./public/main.css --watch"
+  },
+  "dependencies": {
+    "@tailwindcss/cli": "^4.1.18",
+    "daisyui": "^5.5.14",
+    "tailwindcss": "^4.1.18"
+  }
+}

@@ -1,0 +1,8 @@
+type NoteDto = record { id : nat32; title : text; content : text };
+type Result = variant { Ok; Err : text };
+service : {
+  delete_note : (nat32) -> (Result);
+  fetch_note : (nat32) -> (opt NoteDto) query;
+  fetch_note_list : () -> (vec record { nat32; text }) query;
+  post_note : (NoteDto) -> ();
+}

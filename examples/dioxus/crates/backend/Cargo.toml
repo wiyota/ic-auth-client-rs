@@ -1,0 +1,24 @@
+[package]
+publish = false
+name = "backend"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+
+[dependencies]
+candid.workspace = true
+ciborium = "0.2.2"
+domain = { workspace = true, features = ["entity", "ic-stable"] }
+ic-cdk = "0.19"
+ic-cdk-macros = "0.19"
+ic-stable-structures.workspace = true
+no-panic = "0.1"
+rkyv = "0.8"
+serde.workspace = true
