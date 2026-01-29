@@ -1,6 +1,21 @@
 build-wasm:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build --release --target web
 
+check-wasm:
+	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check --target wasm32-unknown-unknown --no-default-features --features wasm-js
+
+check-native-keyring:
+	cargo check --no-default-features --features native,keyring
+
+check-native-pem:
+	cargo check --no-default-features --features native,pem
+
+test-native-keyring:
+	cargo test --no-default-features --features native,keyring
+
+test-native-pem:
+	cargo test --no-default-features --features native,pem
+
 test-chrome:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --chrome
 
