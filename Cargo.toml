@@ -117,6 +117,9 @@ wasm-js = [
     "ic-agent/wasm-bindgen",
 ]
 
+## Internal: suppress wasm-target guard for rust-analyzer
+rust-analyzer = []
+
 [profile.release]
 opt-level = "z"
 lto = true
