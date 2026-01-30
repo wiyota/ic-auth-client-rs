@@ -1,3 +1,4 @@
+use crate::storage::async_storage::IdbStorage;
 use crate::{
     ArcIdentity, AuthClientError,
     api::{
@@ -8,7 +9,7 @@ use crate::{
     key::{BaseKeyType, Key, KeyWithRaw},
     option::{AuthClientLoginOptions, IdleOptions, wasm_js::AuthClientCreateOptions},
     storage::{
-        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_VECTOR, StoredKey,
+        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_STORAGE_KEY_TYPE, KEY_VECTOR, StoredKey,
         async_storage::{AuthClientStorage, LocalStorage},
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
@@ -23,6 +24,8 @@ use ic_agent::{
     export::Principal,
     identity::{AnonymousIdentity, DelegatedIdentity, DelegationError, Identity, SignedDelegation},
 };
+use k256::SecretKey as K256SecretKey;
+use p256::SecretKey as P256SecretKey;
 use parking_lot::Mutex;
 use serde_wasm_bindgen::from_value;
 use std::{cell::RefCell, fmt, sync::Arc, time::Duration};
@@ -113,14 +116,27 @@ impl AuthClient {
         let AuthClientCreateOptions {
             identity,
             storage,
-            key_type: _key_type,
+            key_type,
             idle_options,
         } = options;
 
-        let mut storage = storage.unwrap_or_else(|| Box::new(LocalStorage::new()));
+        let mut storage: Box<dyn AuthClientStorage> = if let Some(storage) = storage {
+            storage
+        } else {
+            {
+                match IdbStorage::new().await {
+                    Ok(storage) => storage.into(),
+                    Err(_e) => {
+                        #[cfg(feature = "tracing")]
+                        error!("Failed to initialize IndexedDB storage: {}", _e);
+                        Box::new(LocalStorage::new())
+                    }
+                }
+            }
+        };
         let options_identity_is_some = identity.is_some();
 
-        let key = Self::create_or_load_key(identity, storage.as_mut()).await?;
+        let key = Self::create_or_load_key(identity, storage.as_mut(), key_type).await?;
 
         let (chain, identity) = Self::load_delegation_chain(storage.as_mut(), &key).await;
 
@@ -138,27 +154,306 @@ impl AuthClient {
     }
 
     /// Creates a new key if one is not found in storage, otherwise loads the existing key.
+    /// Supports both JS and Rust storage formats, and migrates from LocalStorage if needed.
     async fn create_or_load_key(
         identity: Option<ArcIdentity>,
         storage: &mut dyn AuthClientStorage,
+        key_type: Option<BaseKeyType>,
     ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
-            None => match storage.get(KEY_STORAGE_KEY).await {
-                Ok(Some(stored_key)) => {
-                    let private_key = stored_key.decode()?;
-                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
+            None => {
+                // Check for existing key in primary storage (IndexedDB)
+                if let Ok(Some(stored_key)) = storage.get(KEY_STORAGE_KEY).await {
+                    return Self::load_key_from_stored(stored_key, storage, key_type).await;
                 }
-                Ok(None) => {
-                    let mut rng = rand::thread_rng();
-                    let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
-                    storage
-                        .set(KEY_STORAGE_KEY, StoredKey::Raw(private_key))
+
+                // Attempt to migrate from LocalStorage
+                let mut local_storage = LocalStorage::new();
+                if let Ok(Some(local_key)) = local_storage.get(KEY_STORAGE_KEY).await {
+                    #[cfg(feature = "tracing")]
+                    info!("Found identity in LocalStorage, migrating to IndexedDB...");
+
+                    let key = Self::migrate_key_from_local_storage(
+                        &local_key,
+                        &mut local_storage,
+                        storage,
+                    )
+                    .await?;
+
+                    #[cfg(feature = "tracing")]
+                    info!("Migration from LocalStorage completed successfully");
+
+                    return Ok(key);
+                }
+
+                // No existing key found, generate new one in JS-compatible format
+                Self::generate_and_store_new_key(storage, key_type).await
+            }
+        }
+    }
+
+    /// Load a key from stored data, detecting format automatically (JS or Rust).
+    async fn load_key_from_stored(
+        stored_key: StoredKey,
+        storage: &mut dyn AuthClientStorage,
+        key_type: Option<BaseKeyType>,
+    ) -> Result<Key, AuthClientError> {
+        use crate::storage::js_compat::{
+            IdentityFormat, deserialize_ed25519_from_js, detect_identity_format,
+        };
+
+        let stored_str = stored_key.encode();
+        let format = detect_identity_format(&stored_str);
+
+        match format {
+            IdentityFormat::JsEd25519 => {
+                // JS Ed25519 format: JSON array of hex strings
+                let signing_key = deserialize_ed25519_from_js(&stored_str)?;
+                let key = KeyWithRaw::new(signing_key.to_bytes());
+                Ok(Key::WithRaw(key))
+            }
+            IdentityFormat::RustEd25519 => {
+                let bytes = stored_key.decode()?;
+                let key = KeyWithRaw::new_with_type(BaseKeyType::Ed25519, bytes)?;
+                Ok(Key::WithRaw(key))
+            }
+            IdentityFormat::RustPrime256v1 => {
+                let bytes = stored_key.decode()?;
+                let key = KeyWithRaw::new_with_type(BaseKeyType::Prime256v1, bytes)?;
+                Ok(Key::WithRaw(key))
+            }
+            IdentityFormat::RustSecp256k1 => {
+                let bytes = stored_key.decode()?;
+                let key = KeyWithRaw::new_with_type(BaseKeyType::Secp256k1, bytes)?;
+                Ok(Key::WithRaw(key))
+            }
+            IdentityFormat::Unknown => {
+                // Fallback: try to decode with stored key type or provided key type
+                let stored_key_type = Self::load_key_type(storage).await;
+                let bytes = stored_key.decode()?;
+
+                let key_type = stored_key_type.or(key_type).unwrap_or_default();
+                let key = KeyWithRaw::new_with_type(key_type, bytes)?;
+                Ok(Key::WithRaw(key))
+            }
+        }
+    }
+
+    /// Load key type from storage.
+    async fn load_key_type(storage: &mut dyn AuthClientStorage) -> Option<BaseKeyType> {
+        match storage.get(KEY_STORAGE_KEY_TYPE).await {
+            Ok(Some(stored)) => {
+                let value = stored.encode();
+                value.parse::<BaseKeyType>().ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Migrate key and delegation from LocalStorage to primary storage.
+    async fn migrate_key_from_local_storage(
+        local_key: &StoredKey,
+        local_storage: &mut LocalStorage,
+        target_storage: &mut dyn AuthClientStorage,
+    ) -> Result<Key, AuthClientError> {
+        use crate::storage::js_compat::{
+            IdentityFormat, deserialize_ed25519_from_js, detect_identity_format,
+            serialize_ed25519_to_js,
+        };
+
+        let stored_str = local_key.encode();
+        let format = detect_identity_format(&stored_str);
+
+        let key = match format {
+            IdentityFormat::JsEd25519 => {
+                // JS format - keep as-is for interoperability
+                let signing_key = deserialize_ed25519_from_js(&stored_str)?;
+                let key = KeyWithRaw::new(signing_key.to_bytes());
+
+                // Store in JS format in IndexedDB
+                target_storage
+                    .set(KEY_STORAGE_KEY, StoredKey::String(stored_str))
+                    .await?;
+                target_storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String("Ed25519".to_string()),
+                    )
+                    .await?;
+
+                key
+            }
+            IdentityFormat::RustEd25519 => {
+                // Rust format - convert to JS format for interoperability
+                let bytes = local_key.decode()?;
+                let seed: [u8; 32] = bytes.try_into().map_err(|_| {
+                    crate::storage::DecodeError::Ed25519("Invalid Ed25519 key length".to_string())
+                })?;
+                let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+                let js_format = serialize_ed25519_to_js(&signing_key);
+
+                let key = KeyWithRaw::new(seed);
+
+                target_storage
+                    .set(KEY_STORAGE_KEY, StoredKey::String(js_format))
+                    .await?;
+                target_storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String("Ed25519".to_string()),
+                    )
+                    .await?;
+
+                key
+            }
+            IdentityFormat::RustPrime256v1 | IdentityFormat::RustSecp256k1 => {
+                // P-256 and secp256k1 - store as-is (no JS equivalent)
+                let bytes = local_key.decode()?;
+                let key_type = if format == IdentityFormat::RustPrime256v1 {
+                    BaseKeyType::Prime256v1
+                } else {
+                    BaseKeyType::Secp256k1
+                };
+                let key = KeyWithRaw::new_with_type(key_type, bytes.clone())?;
+
+                target_storage
+                    .set(KEY_STORAGE_KEY, StoredKey::Raw(bytes))
+                    .await?;
+                target_storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String(key_type.to_string()),
+                    )
+                    .await?;
+
+                key
+            }
+            IdentityFormat::Unknown => {
+                // Try to decode with stored key type
+                let stored_key_type = Self::load_key_type(local_storage).await;
+                let bytes = local_key.decode()?;
+                let key_type = stored_key_type.unwrap_or_default();
+
+                // For Ed25519, convert to JS format
+                if key_type == BaseKeyType::Ed25519 && bytes.len() == 32 {
+                    let seed: [u8; 32] = bytes.try_into().unwrap();
+                    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+                    let js_format = serialize_ed25519_to_js(&signing_key);
+
+                    target_storage
+                        .set(KEY_STORAGE_KEY, StoredKey::String(js_format))
                         .await?;
-                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
+                } else {
+                    target_storage
+                        .set(KEY_STORAGE_KEY, StoredKey::Raw(bytes.clone()))
+                        .await?;
                 }
-                Err(e) => Err(e.into()),
-            },
+
+                target_storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String(key_type.to_string()),
+                    )
+                    .await?;
+
+                KeyWithRaw::new_with_type(key_type, local_key.decode()?)?
+            }
+        };
+
+        // Migrate delegation chain if present
+        if let Ok(Some(local_delegation)) = local_storage.get(KEY_STORAGE_DELEGATION).await {
+            let delegation_str = local_delegation.encode();
+            // Store as-is - both formats can be read with from_any_json
+            target_storage
+                .set(KEY_STORAGE_DELEGATION, StoredKey::String(delegation_str))
+                .await?;
+            let _ = local_storage.remove(KEY_STORAGE_DELEGATION).await;
+        }
+
+        // Clean up LocalStorage
+        let _ = local_storage.remove(KEY_STORAGE_KEY).await;
+        let _ = local_storage.remove(KEY_STORAGE_KEY_TYPE).await;
+        let _ = local_storage.remove(KEY_VECTOR).await;
+
+        Ok(Key::WithRaw(key))
+    }
+
+    /// Generate a new key and store it in JS-compatible format.
+    async fn generate_and_store_new_key(
+        storage: &mut dyn AuthClientStorage,
+        key_type: Option<BaseKeyType>,
+    ) -> Result<Key, AuthClientError> {
+        use crate::storage::js_compat::serialize_ed25519_to_js;
+
+        let key_type = key_type.unwrap_or_default();
+
+        match key_type {
+            BaseKeyType::Ed25519 => {
+                // Generate and store in JS-compatible format
+                let mut rng = rand::thread_rng();
+                let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+                let js_format = serialize_ed25519_to_js(&signing_key);
+
+                storage
+                    .set(KEY_STORAGE_KEY, StoredKey::String(js_format))
+                    .await?;
+                storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String("Ed25519".to_string()),
+                    )
+                    .await?;
+
+                Ok(Key::WithRaw(KeyWithRaw::new(signing_key.to_bytes())))
+            }
+            BaseKeyType::Prime256v1 | BaseKeyType::Secp256k1 => {
+                // P-256 and secp256k1 - no JS equivalent, store as raw
+                let private_key = Self::generate_key_material(key_type)?;
+                storage
+                    .set(KEY_STORAGE_KEY, StoredKey::Raw(private_key.clone()))
+                    .await?;
+                storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String(key_type.to_string()),
+                    )
+                    .await?;
+                Ok(Key::WithRaw(KeyWithRaw::new_with_type(
+                    key_type,
+                    private_key,
+                )?))
+            }
+        }
+    }
+
+    fn generate_key_material(
+        key_type: BaseKeyType,
+    ) -> Result<Vec<u8>, crate::storage::DecodeError> {
+        match key_type {
+            BaseKeyType::Ed25519 => {
+                let mut rng = rand::thread_rng();
+                let private_key = ed25519_dalek::SigningKey::generate(&mut rng).to_bytes();
+                Ok(private_key.to_vec())
+            }
+            BaseKeyType::Prime256v1 => {
+                let mut rng = rand::thread_rng();
+                let secret = P256SecretKey::random(&mut rng);
+                let der = secret.to_sec1_der().map_err(|e| {
+                    crate::storage::DecodeError::Key(format!("Prime256v1 key encoding error: {e}"))
+                })?;
+                let bytes: Vec<u8> = der.to_vec();
+                Ok(bytes)
+            }
+            BaseKeyType::Secp256k1 => {
+                let mut rng = rand::thread_rng();
+                let secret = K256SecretKey::random(&mut rng);
+                let der = secret.to_sec1_der().map_err(|e| {
+                    crate::storage::DecodeError::Key(format!("Secp256k1 key encoding error: {e}"))
+                })?;
+                let bytes: Vec<u8> = der.to_vec();
+                Ok(bytes)
+            }
         }
     }
 
@@ -180,6 +475,7 @@ impl AuthClient {
     }
 
     /// Loads a delegation chain from storage and updates the identity if the chain is valid.
+    /// Supports both JS and Rust JSON formats automatically.
     async fn load_delegation_chain(
         storage: &mut dyn AuthClientStorage,
         key: &Key,
@@ -189,32 +485,45 @@ impl AuthClient {
 
         match storage.get(KEY_STORAGE_DELEGATION).await {
             Ok(Some(chain_stored)) => {
-                let chain_stored = chain_stored.encode();
-                let chain_result = DelegationChain::from_json(&chain_stored);
-                chain = Some(chain_result);
+                let chain_json = chain_stored.encode();
 
-                let delegation_data = Self::get_delegation_data(&chain);
+                // Use from_any_json to support both JS and Rust formats
+                let chain_result = DelegationChain::from_any_json(&chain_json);
 
-                match delegation_data {
-                    Some((public_key, delegations)) => {
-                        if !public_key.is_empty() {
-                            identity =
-                                ArcIdentity::Delegated(Arc::new(DelegatedIdentity::new_unchecked(
-                                    public_key,
-                                    Box::new(key.as_arc_identity()),
-                                    delegations,
-                                )));
+                match chain_result {
+                    Ok(loaded_chain) => {
+                        let delegation_data =
+                            Self::get_delegation_data(&Some(loaded_chain.clone()));
+
+                        match delegation_data {
+                            Some((public_key, delegations)) => {
+                                if !public_key.is_empty() {
+                                    identity = ArcIdentity::Delegated(Arc::new(
+                                        DelegatedIdentity::new_unchecked(
+                                            public_key,
+                                            Box::new(key.as_arc_identity()),
+                                            delegations,
+                                        ),
+                                    ));
+                                }
+                                chain = Some(loaded_chain);
+                            }
+                            None => {
+                                #[cfg(feature = "tracing")]
+                                info!(
+                                    "Found invalid delegation chain in storage - clearing credentials"
+                                );
+                                if let Err(_e) = Self::delete_storage(storage).await {
+                                    #[cfg(feature = "tracing")]
+                                    error!("Failed to delete storage: {}", _e);
+                                }
+                                identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
+                            }
                         }
                     }
-                    None => {
+                    Err(_e) => {
                         #[cfg(feature = "tracing")]
-                        info!("Found invalid delegation chain in storage - clearing credentials");
-                        if let Err(_e) = Self::delete_storage(storage).await {
-                            #[cfg(feature = "tracing")]
-                            error!("Failed to delete storage: {}", _e);
-                        }
-                        identity = ArcIdentity::Anonymous(Arc::new(AnonymousIdentity));
-                        chain = None;
+                        error!("Failed to parse delegation chain: {}", _e);
                     }
                 }
             }
@@ -322,23 +631,54 @@ impl AuthClient {
         Ok(())
     }
 
-    /// Stores the delegation chain and key in storage.
+    /// Stores the delegation chain and key in storage using JS-compatible formats.
     async fn update_storage_with_delegation(&self, delegation_chain: &DelegationChain) {
+        use crate::storage::js_compat::serialize_ed25519_to_js;
+
         if let Key::WithRaw(key) = &self.0.key {
+            // Store key in JS-compatible format for Ed25519
+            let stored_key = if key.key_type() == BaseKeyType::Ed25519 {
+                let raw = key.raw_key();
+                if raw.len() == 32 {
+                    let seed: [u8; 32] = raw.try_into().unwrap();
+                    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+                    StoredKey::String(serialize_ed25519_to_js(&signing_key))
+                } else {
+                    StoredKey::Raw(raw.to_vec())
+                }
+            } else {
+                StoredKey::Raw(key.raw_key().to_vec())
+            };
+
             if let Err(_e) = self
                 .0
                 .storage
                 .lock()
                 .await
-                .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()))
+                .set(KEY_STORAGE_KEY, stored_key)
                 .await
             {
                 #[cfg(feature = "tracing")]
                 error!("Failed to store key: {}", _e);
             }
+            if let Err(_e) = self
+                .0
+                .storage
+                .lock()
+                .await
+                .set(
+                    KEY_STORAGE_KEY_TYPE,
+                    StoredKey::String(key.key_type().to_string()),
+                )
+                .await
+            {
+                #[cfg(feature = "tracing")]
+                error!("Failed to store key type: {}", _e);
+            }
         }
 
-        let chain_json = delegation_chain.to_json();
+        // Store delegation chain in JS-compatible format
+        let chain_json = delegation_chain.to_js_json();
         if let Err(_e) = self
             .0
             .storage
@@ -832,6 +1172,7 @@ impl AuthClient {
     ) -> Result<(), crate::storage::StorageError> {
         storage.remove(KEY_STORAGE_KEY).await?;
         storage.remove(KEY_STORAGE_DELEGATION).await?;
+        storage.remove(KEY_STORAGE_KEY_TYPE).await?;
         storage.remove(KEY_VECTOR).await?;
         Ok(())
     }
@@ -858,7 +1199,8 @@ impl AuthClientBuilder {
         self
     }
 
-    /// Optional storage with get, set, and remove methods. Currentry only `LocalStorage` is supported.
+    /// Optional storage with get, set, and remove methods. Defaults to IndexedDB with a
+    /// `LocalStorage` fallback.
     pub fn storage<S>(mut self, storage: S) -> Self
     where
         S: AuthClientStorage + 'static,

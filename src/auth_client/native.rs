@@ -1,15 +1,15 @@
 #[cfg(feature = "keyring")]
 use crate::storage::sync_storage::KeyringStorage;
 #[cfg(feature = "pem")]
-use crate::storage::sync_storage::PemStorage;
+use crate::storage::{StorageError, sync_storage::PemStorage};
 use crate::{
     ArcIdentity, AuthClientError,
     api::AuthResponseSuccess,
     idle_manager::{IdleManager, IdleManagerOptions},
-    key::{Key, KeyWithRaw},
+    key::{BaseKeyType, Key, KeyWithRaw},
     option::{AuthClientLoginOptions, IdleOptions, native::NativeAuthClientCreateOptions},
     storage::{
-        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, StorageError, StoredKey,
+        KEY_STORAGE_DELEGATION, KEY_STORAGE_KEY, KEY_STORAGE_KEY_TYPE, StoredKey,
         sync_storage::AuthClientStorage,
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
@@ -21,6 +21,8 @@ use ic_agent::{
     export::Principal,
     identity::{AnonymousIdentity, DelegatedIdentity, DelegationError, Identity, SignedDelegation},
 };
+use k256::SecretKey as K256SecretKey;
+use p256::SecretKey as P256SecretKey;
 use parking_lot::Mutex;
 use serde_json::Number;
 use std::{fmt, sync::Arc, thread, time::Duration};
@@ -156,27 +158,94 @@ impl NativeAuthClient {
     fn create_or_load_key(
         identity: Option<ArcIdentity>,
         storage: &mut dyn AuthClientStorage,
+        key_type: Option<BaseKeyType>,
     ) -> Result<Key, AuthClientError> {
         match identity {
             Some(identity) => Ok(Key::Identity(identity)),
-            None => match storage.get(KEY_STORAGE_KEY) {
-                Ok(Some(stored_key)) => {
-                    let private_key = stored_key.decode().map_err(|e| {
-                        DelegationError::IdentityError(format!(
-                            "Failed to decode private key: {}",
-                            e
-                        ))
-                    })?;
-                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
+            None => {
+                let stored_key_type = match storage.get(KEY_STORAGE_KEY_TYPE) {
+                    Ok(Some(stored)) => {
+                        let value = stored.encode();
+                        value.parse::<BaseKeyType>().ok()
+                    }
+                    Ok(None) => None,
+                    Err(e) => return Err(e.into()),
+                };
+
+                match storage.get(KEY_STORAGE_KEY) {
+                    Ok(Some(stored_key)) => {
+                        let private_key = stored_key.decode().map_err(|e| {
+                            DelegationError::IdentityError(format!(
+                                "Failed to decode private key: {}",
+                                e
+                            ))
+                        })?;
+                        let key_with_raw = if let Some(stored_key_type) = stored_key_type {
+                            KeyWithRaw::new_with_type(stored_key_type, private_key)?
+                        } else if private_key.len() == 32 {
+                            KeyWithRaw::new_with_type(BaseKeyType::Ed25519, private_key)?
+                        } else {
+                            KeyWithRaw::new_with_type(BaseKeyType::Prime256v1, private_key.clone())
+                                .or_else(|_| {
+                                    KeyWithRaw::new_with_type(BaseKeyType::Secp256k1, private_key)
+                                })?
+                        };
+
+                        if stored_key_type.is_none() {
+                            let _ = storage.set(
+                                KEY_STORAGE_KEY_TYPE,
+                                StoredKey::String(key_with_raw.key_type().to_string()),
+                            );
+                        }
+
+                        Ok(Key::WithRaw(key_with_raw))
+                    }
+                    Ok(None) => {
+                        let key_type = key_type.unwrap_or_default();
+                        let private_key = Self::generate_key_material(key_type)?;
+                        storage.set(KEY_STORAGE_KEY, StoredKey::Raw(private_key.clone()))?;
+                        storage.set(
+                            KEY_STORAGE_KEY_TYPE,
+                            StoredKey::String(key_type.to_string()),
+                        )?;
+                        Ok(Key::WithRaw(KeyWithRaw::new_with_type(
+                            key_type,
+                            private_key,
+                        )?))
+                    }
+                    Err(e) => Err(e.into()),
                 }
-                Ok(None) => {
-                    let mut rng = rand::thread_rng();
-                    let private_key = SigningKey::generate(&mut rng).to_bytes();
-                    storage.set(KEY_STORAGE_KEY, StoredKey::Raw(private_key))?;
-                    Ok(Key::WithRaw(KeyWithRaw::new(private_key)))
-                }
-                Err(e) => Err(e.into()),
-            },
+            }
+        }
+    }
+
+    fn generate_key_material(
+        key_type: BaseKeyType,
+    ) -> Result<Vec<u8>, crate::storage::DecodeError> {
+        match key_type {
+            BaseKeyType::Ed25519 => {
+                let mut rng = rand::rngs::OsRng;
+                let private_key = SigningKey::generate(&mut rng).to_bytes();
+                Ok(private_key.to_vec())
+            }
+            BaseKeyType::Prime256v1 => {
+                let mut rng = rand::rngs::OsRng;
+                let secret = P256SecretKey::random(&mut rng);
+                let der = secret.to_sec1_der().map_err(|e| {
+                    crate::storage::DecodeError::Key(format!("Prime256v1 key encoding error: {e}"))
+                })?;
+                let bytes: Vec<u8> = der.to_vec();
+                Ok(bytes)
+            }
+            BaseKeyType::Secp256k1 => {
+                let mut rng = rand::rngs::OsRng;
+                let secret = K256SecretKey::random(&mut rng);
+                let der = secret.to_sec1_der().map_err(|e| {
+                    crate::storage::DecodeError::Key(format!("Secp256k1 key encoding error: {e}"))
+                })?;
+                let bytes: Vec<u8> = der.to_vec();
+                Ok(bytes)
+            }
         }
     }
 
@@ -271,7 +340,7 @@ impl NativeAuthClient {
         let options_identity_is_some = identity.is_some();
         let mut storage = options.storage;
 
-        let key = Self::create_or_load_key(identity, storage.as_mut())?;
+        let key = Self::create_or_load_key(identity, storage.as_mut(), options.key_type)?;
 
         let (chain, identity) = Self::load_delegation_chain(storage.as_mut(), &key);
 
@@ -383,10 +452,17 @@ impl NativeAuthClient {
                 .0
                 .storage
                 .lock()
-                .set(KEY_STORAGE_KEY, StoredKey::Raw(*key.raw_key()))
+                .set(KEY_STORAGE_KEY, StoredKey::Raw(key.raw_key().to_vec()))
             {
                 #[cfg(feature = "tracing")]
                 error!("Failed to store key: {}", _e);
+            }
+            if let Err(_e) = self.0.storage.lock().set(
+                KEY_STORAGE_KEY_TYPE,
+                StoredKey::String(key.key_type().to_string()),
+            ) {
+                #[cfg(feature = "tracing")]
+                error!("Failed to store key type: {}", _e);
             }
         }
 
@@ -921,6 +997,7 @@ impl NativeAuthClient {
     ) -> Result<(), crate::storage::StorageError> {
         storage.remove(KEY_STORAGE_KEY)?;
         storage.remove(KEY_STORAGE_DELEGATION)?;
+        storage.remove(KEY_STORAGE_KEY_TYPE)?;
         Ok(())
     }
 }
