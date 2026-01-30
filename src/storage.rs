@@ -41,6 +41,9 @@ pub enum StoredKey {
     String(String),
     /// Raw key data.
     Raw(Vec<u8>),
+    /// A WebCrypto key pair (IndexedDB only).
+    #[cfg(feature = "wasm-js")]
+    CryptoKeyPair(web_sys::CryptoKeyPair),
 }
 
 impl StoredKey {
@@ -60,6 +63,10 @@ impl StoredKey {
                 Ok(bytes)
             }
             StoredKey::Raw(bytes) => Ok(bytes.clone()),
+            #[cfg(feature = "wasm-js")]
+            StoredKey::CryptoKeyPair(_) => Err(DecodeError::Key(
+                "CryptoKeyPair cannot be decoded to raw bytes".to_string(),
+            )),
         }
     }
 
@@ -82,6 +89,8 @@ impl StoredKey {
         match self {
             StoredKey::String(s) => s.clone(),
             StoredKey::Raw(bytes) => BASE64_STANDARD_NO_PAD.encode(bytes),
+            #[cfg(feature = "wasm-js")]
+            StoredKey::CryptoKeyPair(_) => String::new(),
         }
     }
 }

@@ -52,11 +52,23 @@ impl AuthClientStorage for KeyringStorage {
                 StoredKey::String(string) => StoredKey::String(string)
                     .decode()
                     .map_err(StorageError::from)?,
+                #[cfg(feature = "wasm-js")]
+                StoredKey::CryptoKeyPair(_) => {
+                    return Err(StorageError::Keyring(
+                        "CryptoKeyPair cannot be stored in keyring".to_string(),
+                    ));
+                }
             }
         } else {
             match value {
                 StoredKey::String(string) => string.into_bytes(),
                 StoredKey::Raw(value) => value,
+                #[cfg(feature = "wasm-js")]
+                StoredKey::CryptoKeyPair(_) => {
+                    return Err(StorageError::Keyring(
+                        "CryptoKeyPair cannot be stored in keyring".to_string(),
+                    ));
+                }
             }
         };
         entry.set_secret(&bytes)?;

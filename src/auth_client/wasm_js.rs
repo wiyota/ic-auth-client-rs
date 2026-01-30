@@ -14,6 +14,8 @@ use crate::{
     },
     util::{callback::OnSuccess, delegation_chain::DelegationChain},
 };
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures::{
     future::{AbortHandle, Abortable},
     lock::Mutex as FutureMutex,
@@ -26,12 +28,15 @@ use ic_agent::{
 };
 use k256::SecretKey as K256SecretKey;
 use p256::SecretKey as P256SecretKey;
+use p256::elliptic_curve::sec1::ToEncodedPoint;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
 use std::{cell::RefCell, fmt, sync::Arc, time::Duration};
-use wasm_bindgen_futures::spawn_local;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{
-    Location, MessageEvent,
+    CryptoKey, CryptoKeyPair, Location, MessageEvent, SubtleCrypto,
+    js_sys::{Array, Object, Reflect},
     wasm_bindgen::{JsCast, JsValue},
 };
 
@@ -44,6 +49,25 @@ pub const ERROR_USER_INTERRUPT: &str = "UserInterrupt";
 
 thread_local! {
     static ACTIVE_LOGIN: RefCell<Option<ActiveLogin>> = const { RefCell::new(None) };
+}
+
+#[derive(Deserialize)]
+struct EcJwkExport {
+    kty: Option<String>,
+    crv: Option<String>,
+    d: Option<String>,
+}
+
+#[derive(Serialize)]
+struct EcJwkImport {
+    kty: &'static str,
+    crv: &'static str,
+    x: String,
+    y: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    d: Option<String>,
+    ext: bool,
+    key_ops: Vec<String>,
 }
 
 /// Holds the resources for an active login process.
@@ -203,6 +227,12 @@ impl AuthClient {
             IdentityFormat, deserialize_ed25519_from_js, detect_identity_format,
         };
 
+        if let StoredKey::CryptoKeyPair(pair) = stored_key {
+            let sec1_der = Self::p256_sec1_der_from_crypto_key_pair(&pair).await?;
+            let key = KeyWithRaw::new_with_type(BaseKeyType::Prime256v1, sec1_der)?;
+            return Ok(Key::WithRaw(key));
+        }
+
         let stored_str = stored_key.encode();
         let format = detect_identity_format(&stored_str);
 
@@ -221,6 +251,11 @@ impl AuthClient {
             IdentityFormat::RustPrime256v1 => {
                 let bytes = stored_key.decode()?;
                 let key = KeyWithRaw::new_with_type(BaseKeyType::Prime256v1, bytes)?;
+                if let Ok(pair) = Self::import_p256_keypair_from_sec1_der(key.raw_key()).await {
+                    let _ = storage
+                        .set(KEY_STORAGE_KEY, StoredKey::CryptoKeyPair(pair))
+                        .await;
+                }
                 Ok(Key::WithRaw(key))
             }
             IdentityFormat::RustSecp256k1 => {
@@ -307,14 +342,36 @@ impl AuthClient {
 
                 key
             }
-            IdentityFormat::RustPrime256v1 | IdentityFormat::RustSecp256k1 => {
-                // P-256 and secp256k1 - store as-is (no JS equivalent)
+            IdentityFormat::RustPrime256v1 => {
                 let bytes = local_key.decode()?;
-                let key_type = if format == IdentityFormat::RustPrime256v1 {
-                    BaseKeyType::Prime256v1
-                } else {
-                    BaseKeyType::Secp256k1
+                let key_type = BaseKeyType::Prime256v1;
+                let key = KeyWithRaw::new_with_type(key_type, bytes.clone())?;
+
+                let stored = match Self::import_p256_keypair_from_sec1_der(&bytes).await {
+                    Ok(pair) => StoredKey::CryptoKeyPair(pair),
+                    Err(_) => StoredKey::Raw(bytes.clone()),
                 };
+
+                if let Err(_e) = target_storage.set(KEY_STORAGE_KEY, stored).await {
+                    #[cfg(feature = "tracing")]
+                    error!("Failed to store CryptoKeyPair: {}", _e);
+                    target_storage
+                        .set(KEY_STORAGE_KEY, StoredKey::Raw(bytes.clone()))
+                        .await?;
+                }
+                target_storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String(key_type.to_string()),
+                    )
+                    .await?;
+
+                key
+            }
+            IdentityFormat::RustSecp256k1 => {
+                // secp256k1 - store as-is (no JS equivalent)
+                let bytes = local_key.decode()?;
+                let key_type = BaseKeyType::Secp256k1;
                 let key = KeyWithRaw::new_with_type(key_type, bytes.clone())?;
 
                 target_storage
@@ -344,6 +401,18 @@ impl AuthClient {
                     target_storage
                         .set(KEY_STORAGE_KEY, StoredKey::String(js_format))
                         .await?;
+                } else if key_type == BaseKeyType::Prime256v1 {
+                    let stored = match Self::import_p256_keypair_from_sec1_der(&bytes).await {
+                        Ok(pair) => StoredKey::CryptoKeyPair(pair),
+                        Err(_) => StoredKey::Raw(bytes.clone()),
+                    };
+                    if let Err(_e) = target_storage.set(KEY_STORAGE_KEY, stored).await {
+                        #[cfg(feature = "tracing")]
+                        error!("Failed to store CryptoKeyPair: {}", _e);
+                        target_storage
+                            .set(KEY_STORAGE_KEY, StoredKey::Raw(bytes.clone()))
+                            .await?;
+                    }
                 } else {
                     target_storage
                         .set(KEY_STORAGE_KEY, StoredKey::Raw(bytes.clone()))
@@ -407,8 +476,28 @@ impl AuthClient {
 
                 Ok(Key::WithRaw(KeyWithRaw::new(signing_key.to_bytes())))
             }
-            BaseKeyType::Prime256v1 | BaseKeyType::Secp256k1 => {
-                // P-256 and secp256k1 - no JS equivalent, store as raw
+            BaseKeyType::Prime256v1 => {
+                let (key_pair, sec1_der) = Self::generate_p256_crypto_key_pair().await?;
+                if let Err(_e) = storage
+                    .set(KEY_STORAGE_KEY, StoredKey::CryptoKeyPair(key_pair))
+                    .await
+                {
+                    #[cfg(feature = "tracing")]
+                    error!("Failed to store CryptoKeyPair: {}", _e);
+                    storage
+                        .set(KEY_STORAGE_KEY, StoredKey::Raw(sec1_der.clone()))
+                        .await?;
+                }
+                storage
+                    .set(
+                        KEY_STORAGE_KEY_TYPE,
+                        StoredKey::String(key_type.to_string()),
+                    )
+                    .await?;
+                Ok(Key::WithRaw(KeyWithRaw::new_with_type(key_type, sec1_der)?))
+            }
+            BaseKeyType::Secp256k1 => {
+                // Secp256k1 - no JS equivalent, store as raw
                 let private_key = Self::generate_key_material(key_type)?;
                 storage
                     .set(KEY_STORAGE_KEY, StoredKey::Raw(private_key.clone()))
@@ -455,6 +544,220 @@ impl AuthClient {
                 Ok(bytes)
             }
         }
+    }
+
+    fn js_error_message(error: &JsValue) -> String {
+        error
+            .as_string()
+            .unwrap_or_else(|| format!("WebCrypto error: {error:?}"))
+    }
+
+    fn subtle_crypto() -> Result<SubtleCrypto, crate::storage::DecodeError> {
+        let crypto = window()
+            .crypto()
+            .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        Ok(crypto.subtle())
+    }
+
+    fn ec_keygen_params() -> Result<Object, crate::storage::DecodeError> {
+        let params = Object::new();
+        Reflect::set(
+            &params,
+            &JsValue::from_str("name"),
+            &JsValue::from_str("ECDSA"),
+        )
+        .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        Reflect::set(
+            &params,
+            &JsValue::from_str("namedCurve"),
+            &JsValue::from_str("P-256"),
+        )
+        .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        Ok(params)
+    }
+
+    async fn export_p256_jwk(key: &CryptoKey) -> Result<EcJwkExport, crate::storage::DecodeError> {
+        let subtle = Self::subtle_crypto()?;
+        let promise = subtle
+            .export_key("jwk", key)
+            .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        let value = JsFuture::from(promise)
+            .await
+            .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        from_value::<EcJwkExport>(value).map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Failed to deserialize JWK: {e}"))
+        })
+    }
+
+    fn p256_secret_key_from_jwk(
+        jwk: &EcJwkExport,
+    ) -> Result<P256SecretKey, crate::storage::DecodeError> {
+        if let Some(kty) = &jwk.kty {
+            if kty != "EC" {
+                return Err(crate::storage::DecodeError::Key(format!(
+                    "Unexpected JWK kty: {kty}"
+                )));
+            }
+        }
+        if let Some(crv) = &jwk.crv {
+            if crv != "P-256" {
+                return Err(crate::storage::DecodeError::Key(format!(
+                    "Unexpected JWK crv: {crv}"
+                )));
+            }
+        }
+        let d = jwk.d.as_ref().ok_or_else(|| {
+            crate::storage::DecodeError::Key("JWK missing private key material".to_string())
+        })?;
+        let d_bytes = URL_SAFE_NO_PAD
+            .decode(d)
+            .map_err(crate::storage::DecodeError::Base64)?;
+        let secret = P256SecretKey::from_slice(&d_bytes).map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Prime256v1 key decode error: {e}"))
+        })?;
+        Ok(secret)
+    }
+
+    fn p256_sec1_der_from_secret(
+        secret: &P256SecretKey,
+    ) -> Result<Vec<u8>, crate::storage::DecodeError> {
+        let der = secret.to_sec1_der().map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Prime256v1 key encoding error: {e}"))
+        })?;
+        Ok(der.to_vec())
+    }
+
+    async fn p256_sec1_der_from_crypto_key_pair(
+        pair: &CryptoKeyPair,
+    ) -> Result<Vec<u8>, crate::storage::DecodeError> {
+        let private_key = pair.get_private_key();
+        let jwk = Self::export_p256_jwk(&private_key).await?;
+        let secret = Self::p256_secret_key_from_jwk(&jwk)?;
+        Self::p256_sec1_der_from_secret(&secret)
+    }
+
+    fn crypto_keypair_from_js_value(
+        value: JsValue,
+    ) -> Result<CryptoKeyPair, crate::storage::DecodeError> {
+        if let Ok(pair) = value.clone().dyn_into::<CryptoKeyPair>() {
+            return Ok(pair);
+        }
+        if value.is_object() {
+            let private_key = Reflect::get(&value, &JsValue::from_str("privateKey"))
+                .ok()
+                .and_then(|val| val.dyn_into::<CryptoKey>().ok());
+            let public_key = Reflect::get(&value, &JsValue::from_str("publicKey"))
+                .ok()
+                .and_then(|val| val.dyn_into::<CryptoKey>().ok());
+            if let (Some(private_key), Some(public_key)) = (private_key, public_key) {
+                return Ok(CryptoKeyPair::new(&private_key, &public_key));
+            }
+        }
+        Err(crate::storage::DecodeError::Key(format!(
+            "Failed to cast CryptoKeyPair: {:?}",
+            value
+        )))
+    }
+
+    async fn generate_p256_crypto_key_pair()
+    -> Result<(CryptoKeyPair, Vec<u8>), crate::storage::DecodeError> {
+        let subtle = Self::subtle_crypto()?;
+        let params = Self::ec_keygen_params()?;
+        let usages = Array::new();
+        usages.push(&JsValue::from_str("sign"));
+        usages.push(&JsValue::from_str("verify"));
+        let promise = subtle
+            .generate_key_with_object(&params, true, &usages.into())
+            .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        let value = JsFuture::from(promise)
+            .await
+            .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?;
+        let pair = Self::crypto_keypair_from_js_value(value)?;
+        let sec1_der = Self::p256_sec1_der_from_crypto_key_pair(&pair).await?;
+        Ok((pair, sec1_der))
+    }
+
+    async fn import_p256_keypair_from_sec1_der(
+        sec1_der: &[u8],
+    ) -> Result<CryptoKeyPair, crate::storage::DecodeError> {
+        let secret = P256SecretKey::from_sec1_der(sec1_der).map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Prime256v1 key decode error: {e}"))
+        })?;
+        let public_key = secret.public_key();
+        let encoded = public_key.to_encoded_point(false);
+        let encoded_bytes = encoded.as_bytes();
+        if encoded_bytes.len() != 65 || encoded_bytes[0] != 4 {
+            return Err(crate::storage::DecodeError::Key(
+                "Invalid P-256 public key encoding".to_string(),
+            ));
+        }
+
+        let x = URL_SAFE_NO_PAD.encode(&encoded_bytes[1..33]);
+        let y = URL_SAFE_NO_PAD.encode(&encoded_bytes[33..65]);
+        let d = URL_SAFE_NO_PAD.encode(secret.to_bytes().as_slice());
+
+        let private_jwk = EcJwkImport {
+            kty: "EC",
+            crv: "P-256",
+            x: x.clone(),
+            y: y.clone(),
+            d: Some(d),
+            ext: true,
+            key_ops: vec!["sign".to_string()],
+        };
+        let public_jwk = EcJwkImport {
+            kty: "EC",
+            crv: "P-256",
+            x,
+            y,
+            d: None,
+            ext: true,
+            key_ops: vec!["verify".to_string()],
+        };
+
+        let subtle = Self::subtle_crypto()?;
+        let params = Self::ec_keygen_params()?;
+
+        let private_value = serde_wasm_bindgen::to_value(&private_jwk).map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Failed to serialize JWK: {e}"))
+        })?;
+        let public_value = serde_wasm_bindgen::to_value(&public_jwk).map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Failed to serialize JWK: {e}"))
+        })?;
+
+        let private_obj: Object = private_value.dyn_into().map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Invalid JWK object: {:?}", e))
+        })?;
+        let public_obj: Object = public_value.dyn_into().map_err(|e| {
+            crate::storage::DecodeError::Key(format!("Invalid JWK object: {:?}", e))
+        })?;
+
+        let private_usages = Array::new();
+        private_usages.push(&JsValue::from_str("sign"));
+        let public_usages = Array::new();
+        public_usages.push(&JsValue::from_str("verify"));
+
+        let private_key = JsFuture::from(
+            subtle
+                .import_key_with_object("jwk", &private_obj, &params, true, &private_usages.into())
+                .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?,
+        )
+        .await
+        .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?
+        .dyn_into::<CryptoKey>()
+        .map_err(|e| crate::storage::DecodeError::Key(format!("Invalid CryptoKey: {:?}", e)))?;
+
+        let public_key = JsFuture::from(
+            subtle
+                .import_key_with_object("jwk", &public_obj, &params, true, &public_usages.into())
+                .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?,
+        )
+        .await
+        .map_err(|e| crate::storage::DecodeError::Key(Self::js_error_message(&e)))?
+        .dyn_into::<CryptoKey>()
+        .map_err(|e| crate::storage::DecodeError::Key(format!("Invalid CryptoKey: {:?}", e)))?;
+
+        Ok(CryptoKeyPair::new(&private_key, &public_key))
     }
 
     /// Extracts delegation data from a delegation chain if it is valid.
@@ -637,17 +940,27 @@ impl AuthClient {
 
         if let Key::WithRaw(key) = &self.0.key {
             // Store key in JS-compatible format for Ed25519
-            let stored_key = if key.key_type() == BaseKeyType::Ed25519 {
-                let raw = key.raw_key();
-                if raw.len() == 32 {
-                    let seed: [u8; 32] = raw.try_into().unwrap();
-                    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
-                    StoredKey::String(serialize_ed25519_to_js(&signing_key))
-                } else {
-                    StoredKey::Raw(raw.to_vec())
+            let (stored_key, fallback_raw) = match key.key_type() {
+                BaseKeyType::Ed25519 => {
+                    let raw = key.raw_key();
+                    if raw.len() == 32 {
+                        let seed: [u8; 32] = raw.try_into().unwrap();
+                        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+                        (
+                            StoredKey::String(serialize_ed25519_to_js(&signing_key)),
+                            None,
+                        )
+                    } else {
+                        (StoredKey::Raw(raw.to_vec()), None)
+                    }
                 }
-            } else {
-                StoredKey::Raw(key.raw_key().to_vec())
+                BaseKeyType::Prime256v1 => {
+                    match Self::import_p256_keypair_from_sec1_der(key.raw_key()).await {
+                        Ok(pair) => (StoredKey::CryptoKeyPair(pair), Some(key.raw_key().to_vec())),
+                        Err(_) => (StoredKey::Raw(key.raw_key().to_vec()), None),
+                    }
+                }
+                BaseKeyType::Secp256k1 => (StoredKey::Raw(key.raw_key().to_vec()), None),
             };
 
             if let Err(_e) = self
@@ -660,6 +973,15 @@ impl AuthClient {
             {
                 #[cfg(feature = "tracing")]
                 error!("Failed to store key: {}", _e);
+                if let Some(raw) = fallback_raw {
+                    let _ = self
+                        .0
+                        .storage
+                        .lock()
+                        .await
+                        .set(KEY_STORAGE_KEY, StoredKey::Raw(raw))
+                        .await;
+                }
             }
             if let Err(_e) = self
                 .0

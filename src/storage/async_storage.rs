@@ -5,9 +5,10 @@
 use super::{StorageError, StoredKey};
 use futures::future::LocalBoxFuture;
 use idb::{Database, DatabaseEvent, Factory, ObjectStoreParams, TransactionMode};
+use js_sys::Reflect;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::js_sys;
-use web_sys::{Storage, js_sys::Uint8Array};
+use web_sys::{CryptoKey, CryptoKeyPair, Storage, js_sys::Uint8Array};
 
 const LOCAL_STORAGE_PREFIX: &str = "ic-";
 type StorageFuture<'a, T> = LocalBoxFuture<'a, T>;
@@ -59,8 +60,21 @@ impl AuthClientStorage for LocalStorage {
                 .get_local_storage()
                 .ok_or_else(|| StorageError::WebSys("LocalStorage not available".to_string()))?;
             let key = format!("{}{}", LOCAL_STORAGE_PREFIX, key);
-            let value = value.encode();
-            local_storage.set_item(&key, value.as_ref())?;
+            match value {
+                StoredKey::String(value) => {
+                    local_storage.set_item(&key, value.as_ref())?;
+                }
+                StoredKey::Raw(bytes) => {
+                    let value = StoredKey::Raw(bytes).encode();
+                    local_storage.set_item(&key, value.as_ref())?;
+                }
+                #[cfg(feature = "wasm-js")]
+                StoredKey::CryptoKeyPair(_) => {
+                    return Err(StorageError::WebSys(
+                        "CryptoKeyPair cannot be stored in LocalStorage".to_string(),
+                    ));
+                }
+            }
             Ok(())
         })
     }
@@ -281,12 +295,34 @@ fn stored_key_to_js(value: StoredKey) -> JsValue {
             let array = Uint8Array::from(bytes.as_slice());
             array.into()
         }
+        #[cfg(feature = "wasm-js")]
+        StoredKey::CryptoKeyPair(pair) => JsValue::from(pair),
     }
 }
 
 fn stored_key_from_js(value: JsValue) -> Option<StoredKey> {
     if value.is_string() {
         return value.as_string().map(StoredKey::String);
+    }
+    #[cfg(feature = "wasm-js")]
+    {
+        if let Ok(pair) = value.clone().dyn_into::<CryptoKeyPair>() {
+            return Some(StoredKey::CryptoKeyPair(pair));
+        }
+        if value.is_object() {
+            let private_key = Reflect::get(&value, &JsValue::from_str("privateKey"))
+                .ok()
+                .and_then(|val| val.dyn_into::<CryptoKey>().ok());
+            let public_key = Reflect::get(&value, &JsValue::from_str("publicKey"))
+                .ok()
+                .and_then(|val| val.dyn_into::<CryptoKey>().ok());
+            if let (Some(private_key), Some(public_key)) = (private_key, public_key) {
+                return Some(StoredKey::CryptoKeyPair(CryptoKeyPair::new(
+                    &private_key,
+                    &public_key,
+                )));
+            }
+        }
     }
     if value.is_instance_of::<js_sys::Uint8Array>() || value.is_instance_of::<js_sys::ArrayBuffer>()
     {

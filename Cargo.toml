@@ -48,7 +48,11 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 wasm-timer = { version = "0.2", optional = true }
 web-sys = { version = "0.3", optional = true, default-features = false, features = [
+    "Crypto",
+    "CryptoKey",
+    "CryptoKeyPair",
     "MessageEvent",
+    "SubtleCrypto",
     "Storage",
     "Url",
     "Window",
