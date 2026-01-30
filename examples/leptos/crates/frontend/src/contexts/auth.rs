@@ -8,6 +8,7 @@ use leptos::{
     prelude::*,
     task::spawn_local,
 };
+use leptos_fetch::QueryClient;
 use reactive_stores::Store;
 use std::sync::Arc;
 use util::{
@@ -113,8 +114,10 @@ impl Auth {
     pub fn logout(store: AuthStore) {
         if let Some(client) = store.auth_client().get() {
             let client_clone = client.clone();
+            let query_client: QueryClient = expect_context();
             spawn_local(async move {
                 client_clone.logout(None).await;
+                query_client.clear();
                 if let Some(updated_client) = store.auth_client().get_untracked() {
                     console_log("Logged off successfully");
                     Auth::update_with_client(store, updated_client);
