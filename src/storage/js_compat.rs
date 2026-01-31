@@ -41,8 +41,11 @@ pub enum DelegationFormat {
 pub fn detect_identity_format(stored: &str) -> IdentityFormat {
     // Try JS Ed25519 format: JSON array of 2 hex strings
     if let Ok(arr) = serde_json::from_str::<[String; 2]>(stored) {
-        if arr[0].starts_with(ED25519_DER_PREFIX_HEX) && arr[1].len() == 128 {
-            return IdentityFormat::JsEd25519;
+        if arr[0].starts_with(ED25519_DER_PREFIX_HEX) {
+            // JS stores only the 32-byte seed (64 hex chars) while Rust stores seed+pub (128 hex chars).
+            if arr[1].len() == 64 || arr[1].len() == 128 {
+                return IdentityFormat::JsEd25519;
+            }
         }
     }
 
