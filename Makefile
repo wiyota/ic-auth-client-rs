@@ -1,6 +1,9 @@
 build-wasm:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build --release --target web
 
+build-wasm-compat:
+	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build --release --target web --features wasm-compat-test
+
 check-wasm:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check --target wasm32-unknown-unknown --no-default-features --features wasm-js
 

@@ -1615,6 +1615,79 @@ impl AuthClientBuilder {
     }
 }
 
+#[cfg(feature = "wasm-compat-test")]
+mod compat_exports {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    fn to_js_error<E: std::fmt::Display>(err: E) -> JsValue {
+        JsValue::from_str(&err.to_string())
+    }
+
+    fn parse_key_type(label: Option<String>) -> Option<BaseKeyType> {
+        match label.as_deref() {
+            Some("Ed25519") => Some(BaseKeyType::Ed25519),
+            Some("ECDSA") | Some("Prime256v1") | Some("P-256") | Some("p256") => {
+                Some(BaseKeyType::Prime256v1)
+            }
+            Some("Secp256k1") => Some(BaseKeyType::Secp256k1),
+            _ => None,
+        }
+    }
+
+    fn key_principal_text(key: &Key) -> Result<String, JsValue> {
+        let identity: ArcIdentity = key.into();
+        let principal = identity.as_arc_identity().sender().map_err(to_js_error)?;
+        Ok(principal.to_text())
+    }
+
+    /// Clears auth-related keys from IndexedDB storage.
+    #[wasm_bindgen]
+    pub async fn compat_clear_storage() -> Result<(), JsValue> {
+        let mut storage = IdbStorage::new().await.map_err(to_js_error)?;
+        storage.remove(KEY_STORAGE_KEY).await.map_err(to_js_error)?;
+        storage
+            .remove(KEY_STORAGE_DELEGATION)
+            .await
+            .map_err(to_js_error)?;
+        storage
+            .remove(KEY_STORAGE_KEY_TYPE)
+            .await
+            .map_err(to_js_error)?;
+        storage.remove(KEY_VECTOR).await.map_err(to_js_error)?;
+        Ok(())
+    }
+
+    /// Generates and stores a key in Rust, returning the principal text.
+    #[wasm_bindgen]
+    pub async fn compat_rust_write_key(key_type: String) -> Result<String, JsValue> {
+        let mut storage = IdbStorage::new().await.map_err(to_js_error)?;
+        let key_type = parse_key_type(Some(key_type));
+        let key = AuthClient::generate_and_store_new_key(&mut storage, key_type)
+            .await
+            .map_err(to_js_error)?;
+        key_principal_text(&key)
+    }
+
+    /// Loads a stored key via Rust and returns its principal text.
+    #[wasm_bindgen]
+    pub async fn compat_rust_read_key_principal(
+        key_type: Option<String>,
+    ) -> Result<String, JsValue> {
+        let mut storage = IdbStorage::new().await.map_err(to_js_error)?;
+        let stored_key = storage
+            .get(KEY_STORAGE_KEY)
+            .await
+            .map_err(to_js_error)?
+            .ok_or_else(|| JsValue::from_str("Stored key not found"))?;
+        let key_type = parse_key_type(key_type);
+        let key = AuthClient::load_key_from_stored(stored_key, &mut storage, key_type)
+            .await
+            .map_err(to_js_error)?;
+        key_principal_text(&key)
+    }
+}
+
 #[allow(dead_code)]
 #[cfg(test)]
 mod tests {

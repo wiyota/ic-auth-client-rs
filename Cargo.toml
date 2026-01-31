@@ -124,6 +124,9 @@ wasm-js = [
     "ic-agent/wasm-bindgen",
 ]
 
+## Test-only exports for JS/Rust storage compatibility checks (wasm)
+wasm-compat-test = ["wasm-js"]
+
 ## Internal: suppress wasm-target guard for rust-analyzer
 rust-analyzer = []
 
