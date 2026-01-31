@@ -35,3 +35,6 @@ clean:
 	rm -rf target
 	rm -rf pkg
 	cargo clean
+
+clean-example-builds:
+	find examples -type d \( -name target -o -name .dfx -o -name dist \) -prune -exec rm -rf {} +
