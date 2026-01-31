@@ -909,9 +909,13 @@ impl NativeAuthClient {
         let (tx, rx) = oneshot::channel::<CallbackResult>();
 
         let public_key_hex = hex::encode(self.0.key.public_key().unwrap());
+        let key_type = match &self.0.key {
+            Key::WithRaw(key) => Some(key.key_type()),
+            Key::Identity(identity) => BaseKeyType::from_identity(identity),
+        };
 
         let mut url = Url::parse(ii_url.as_ref()).map_err(NativeLoginError::UrlParseError)?;
-        Self::set_query_params(&mut url, &options, &redirect_uri, &public_key_hex);
+        Self::set_query_params(&mut url, &options, &redirect_uri, &public_key_hex, key_type);
 
         webbrowser::open(url.as_str())
             .map_err(|e| NativeLoginError::BrowserOpenError(e.to_string()))?;
@@ -928,11 +932,15 @@ impl NativeAuthClient {
         options: &AuthClientLoginOptions,
         redirect_uri: &str,
         public_key_hex: &str,
+        key_type: Option<BaseKeyType>,
     ) {
         let mut query_pairs = url.query_pairs_mut();
         query_pairs
             .append_pair("redirectUri", redirect_uri)
             .append_pair("pubkey", public_key_hex);
+        if let Some(key_type) = key_type {
+            query_pairs.append_pair("keyType", &key_type.to_string());
+        }
 
         if let Some(ref identity_provider) = options.identity_provider {
             query_pairs.append_pair("identityProvider", identity_provider);
