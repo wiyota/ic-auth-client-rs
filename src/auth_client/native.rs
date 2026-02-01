@@ -110,7 +110,7 @@ impl fmt::Debug for AuthClientInner {
 pub struct NativeAuthClient(Arc<AuthClientInner>);
 
 impl NativeAuthClient {
-    /// Creates a new [`AuthClient`] with default options.
+    /// Creates a new [`NativeAuthClient`] with default options.
     #[cfg(feature = "keyring")]
     pub fn new<T: AsRef<str>>(service_name: T) -> Result<Self, AuthClientError> {
         let options = NativeAuthClientCreateOptions::builder()
@@ -119,7 +119,7 @@ impl NativeAuthClient {
         Self::new_with_options(options)
     }
 
-    /// Creates a new [`AuthClient`] using the first PEM file found inside the provided directory.
+    /// Creates a new [`NativeAuthClient`] using the first PEM file found inside the provided directory.
     #[cfg(feature = "pem")]
     pub fn new_with_pem_directory<T, P>(
         service_name: T,
@@ -332,7 +332,7 @@ impl NativeAuthClient {
         }
     }
 
-    /// Creates a new [`AuthClient`] with the provided options.
+    /// Creates a new [`NativeAuthClient`] with the provided options.
     pub fn new_with_options(
         options: NativeAuthClientCreateOptions,
     ) -> Result<Self, AuthClientError> {
