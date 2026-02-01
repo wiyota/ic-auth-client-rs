@@ -10,6 +10,10 @@ pkg/
 # JavaScript
 node_modules/
 ii-integration/package-lock.json
+package-lock.json
+
+# UniFFI
+uniffi/generated/
 
 # Various IDEs and Editors
 .vscode/

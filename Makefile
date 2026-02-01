@@ -31,6 +31,9 @@ test-safari:
 doc:
 	RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --features keyring,pem,native,tracing,wasm-js --no-deps --open
 
+build-swift:
+	./swift-package/IcAuthClient/build_all.sh
+
 clean:
 	rm -rf target
 	rm -rf pkg

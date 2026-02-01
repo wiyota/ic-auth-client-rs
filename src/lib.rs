@@ -34,3 +34,9 @@ pub use option::native::NativeAuthClientCreateOptions;
 pub use option::wasm_js::AuthClientCreateOptions;
 pub use option::{AuthClientLoginOptions, IdleOptions};
 pub use util::{arc_identity::ArcIdentity, callback, delegation_chain};
+
+#[cfg(feature = "uniffi")]
+mod uniffi_bindings;
+
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
