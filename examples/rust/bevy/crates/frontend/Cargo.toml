@@ -11,7 +11,7 @@ candid.workspace = true
 flume = "0.12"
 haalka = "0.5.1"
 ic-agent = "0.45"
-ic-auth-client = { path = "../../../../", default-features = false, features = [
+ic-auth-client = { path = "../../../../../", default-features = false, features = [
     "native",
     "tracing",
 ] }
