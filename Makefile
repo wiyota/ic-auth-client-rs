@@ -29,7 +29,7 @@ test-safari:
 	RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack test --safari
 
 doc:
-	RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --all-features --no-deps --open
+	RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --features keyring,pem,native,tracing,wasm-js --no-deps --open
 
 clean:
 	rm -rf target
