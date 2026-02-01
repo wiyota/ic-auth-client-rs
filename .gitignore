@@ -9,6 +9,7 @@ pkg/
 
 # JavaScript
 node_modules/
+ii-integration/package-lock.json
 
 # Various IDEs and Editors
 .vscode/
