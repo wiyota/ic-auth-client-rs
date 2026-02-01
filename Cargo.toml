@@ -74,9 +74,7 @@ keyring = { version = "3", optional = true, features = [
     "sync-secret-service",
 ] }
 # `pem` feature
-pkcs8 = { version = "0.10", optional = true, default-features = true, features = [
-    "pem",
-] }
+pkcs8 = { version = "0.10", optional = true, features = ["pem"] }
 
 [dev-dependencies]
 serde_test = "1.0"
