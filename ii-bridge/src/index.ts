@@ -51,6 +51,10 @@ async function startLogin(button: HTMLButtonElement, params: Params) {
       authClient,
       params.redirectUri,
       popupCenter({ height: AUTH_POPUP_HEIGHT, width: AUTH_POPUP_WIDTH }),
+      {
+        onSuccess: renderSuccessState,
+        onError: renderFailureState,
+      },
     );
   } catch (error) {
     button.disabled = false;
@@ -69,6 +73,38 @@ function renderError(error: Error) {
   const errorElement = getRequiredElement<HTMLParagraphElement>("#error");
   errorElement.textContent = error.message;
   errorElement.hidden = false;
+}
+
+function renderSuccessState() {
+  renderResultState("Authentication Successful", "You can close this tab.");
+}
+
+function renderFailureState(error?: string) {
+  renderResultState(
+    "Authentication Failed",
+    "Please close this tab and try again from the app.",
+  );
+  if (error) {
+    renderError(new Error(error));
+  }
+}
+
+function renderResultState(headlineText: string, messageText: string) {
+  const messageElement = getRequiredElement<HTMLParagraphElement>("#message");
+  const button = getRequiredElement<HTMLButtonElement>("#ii-login-button");
+  const resultContainer = getRequiredElement<HTMLDivElement>("#result");
+  const resultHeadline =
+    getRequiredElement<HTMLParagraphElement>("#result-headline");
+  const resultMessage =
+    getRequiredElement<HTMLParagraphElement>("#result-message");
+
+  button.hidden = true;
+  button.style.display = "none";
+  button.setAttribute("aria-hidden", "true");
+  messageElement.hidden = true;
+  resultHeadline.textContent = headlineText;
+  resultMessage.textContent = messageText;
+  resultContainer.hidden = false;
 }
 
 /** Query an element or fail fast with a clear error. */
