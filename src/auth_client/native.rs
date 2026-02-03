@@ -888,15 +888,15 @@ impl NativeAuthClient {
     ))]
     pub fn login<T: AsRef<str> + Send + 'static>(
         &self,
-        ii_url: T,
+        auth_bridge_url: T,
         options: AuthClientLoginOptions,
     ) {
         let client = self.clone();
-        let ii_url = ii_url.as_ref().to_string();
+        let auth_bridge_url = auth_bridge_url.as_ref().to_string();
 
         thread::spawn(move || {
             let on_error = options.on_error.clone();
-            if let Err(e) = block_on(client.login_task(ii_url, options)) {
+            if let Err(e) = block_on(client.login_task(auth_bridge_url, options)) {
                 if let Some(on_error) = on_error {
                     on_error.0.lock()(Some(e.to_string()));
                 }
@@ -907,7 +907,7 @@ impl NativeAuthClient {
     /// Builds a login URL for external authentication flows (e.g. iOS ASWebAuthenticationSession).
     pub fn build_login_url<T: AsRef<str>>(
         &self,
-        ii_url: T,
+        auth_bridge_url: T,
         redirect_uri: &str,
         options: AuthClientLoginOptions,
     ) -> Result<String, NativeLoginError> {
@@ -917,7 +917,8 @@ impl NativeAuthClient {
             Key::Identity(identity) => BaseKeyType::from_identity(identity),
         };
 
-        let mut url = Url::parse(ii_url.as_ref()).map_err(NativeLoginError::UrlParseError)?;
+        let mut url =
+            Url::parse(auth_bridge_url.as_ref()).map_err(NativeLoginError::UrlParseError)?;
         Self::set_query_params(&mut url, &options, redirect_uri, &public_key_hex, key_type);
         Ok(url.to_string())
     }

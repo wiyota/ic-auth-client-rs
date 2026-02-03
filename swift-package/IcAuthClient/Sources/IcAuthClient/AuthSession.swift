@@ -34,19 +34,17 @@ public final class AuthSession: NSObject {
 
     #if os(iOS)
         public func login(
-            iiUrl: String,
+            authBridgeUrl: String,
             redirectUri: String,
             options: LoginOptions,
             window: UIWindow,
-            mode: Mode = .defaultBrowser,
             completion: @escaping (Result<Void, Error>) -> Void
         ) {
             startSession(
-                iiUrl: iiUrl,
+                authBridgeUrl: authBridgeUrl,
                 redirectUri: redirectUri,
                 options: options,
                 window: window,
-                mode: mode,
                 completion: completion
             )
         }
@@ -54,35 +52,32 @@ public final class AuthSession: NSObject {
 
     #if os(macOS)
         public func login(
-            iiUrl: String,
+            authBridgeUrl: String,
             redirectUri: String,
             options: LoginOptions,
             window: NSWindow,
-            mode: Mode = .defaultBrowser,
             completion: @escaping (Result<Void, Error>) -> Void
         ) {
             startSession(
-                iiUrl: iiUrl,
+                authBridgeUrl: authBridgeUrl,
                 redirectUri: redirectUri,
                 options: options,
                 window: window,
-                mode: mode,
                 completion: completion
             )
         }
     #endif
 
     private func startSession(
-        iiUrl: String,
+        authBridgeUrl: String,
         redirectUri: String,
         options: LoginOptions,
         window: AnyObject,
-        mode: Mode,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         do {
             let loginUrl = try client.buildLoginUrl(
-                iiUrl: iiUrl,
+                authBridgeUrl: authBridgeUrl,
                 redirectUri: redirectUri,
                 options: options
             )

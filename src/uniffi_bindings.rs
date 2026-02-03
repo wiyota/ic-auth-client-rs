@@ -79,7 +79,7 @@ impl AuthClient {
 
     pub fn build_login_url(
         &self,
-        ii_url: String,
+        auth_bridge_url: String,
         redirect_uri: String,
         options: LoginOptions,
     ) -> Result<String, AuthError> {
@@ -100,7 +100,7 @@ impl AuthClient {
         }
 
         self.inner
-            .build_login_url(ii_url, &redirect_uri, opts)
+            .build_login_url(auth_bridge_url, &redirect_uri, opts)
             .map_err(|e| AuthError::Message(e.to_string()))
     }
 
@@ -153,7 +153,7 @@ impl AuthClient {
 #[cfg(feature = "native")]
 #[uniffi::export]
 impl AuthClient {
-    pub fn login(&self, ii_url: String, options: LoginOptions) -> Result<(), AuthError> {
+    pub fn login(&self, auth_bridge_url: String, options: LoginOptions) -> Result<(), AuthError> {
         let mut opts = AuthClientLoginOptions {
             identity_provider: options.identity_provider,
             max_time_to_live: options.max_time_to_live,
@@ -172,7 +172,7 @@ impl AuthClient {
 
         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         {
-            self.inner.login(ii_url, opts);
+            self.inner.login(auth_bridge_url, opts);
             Ok(())
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

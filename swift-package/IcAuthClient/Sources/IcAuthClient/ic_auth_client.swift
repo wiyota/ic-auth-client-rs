@@ -524,7 +524,7 @@ public protocol AuthClientProtocol: AnyObject, Sendable {
     
     func baseKeyType()  -> String?
     
-    func buildLoginUrl(iiUrl: String, redirectUri: String, options: LoginOptions) throws  -> String
+    func buildLoginUrl(authBridgeUrl: String, redirectUri: String, options: LoginOptions) throws  -> String
     
     func delegationChainJson()  -> String?
     
@@ -534,7 +534,7 @@ public protocol AuthClientProtocol: AnyObject, Sendable {
     
     func isAuthenticated()  -> Bool
     
-    func login(iiUrl: String, options: LoginOptions) throws 
+    func login(authBridgeUrl: String, options: LoginOptions) throws 
     
     func logout() 
     
@@ -614,11 +614,11 @@ open func baseKeyType() -> String?  {
 })
 }
     
-open func buildLoginUrl(iiUrl: String, redirectUri: String, options: LoginOptions)throws  -> String  {
+open func buildLoginUrl(authBridgeUrl: String, redirectUri: String, options: LoginOptions)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_build_login_url(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(iiUrl),
+        FfiConverterString.lower(authBridgeUrl),
         FfiConverterString.lower(redirectUri),
         FfiConverterTypeLoginOptions_lower(options),$0
     )
@@ -657,10 +657,10 @@ open func isAuthenticated() -> Bool  {
 })
 }
     
-open func login(iiUrl: String, options: LoginOptions)throws   {try rustCallWithError(FfiConverterTypeAuthError_lift) {
+open func login(authBridgeUrl: String, options: LoginOptions)throws   {try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_login(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(iiUrl),
+        FfiConverterString.lower(authBridgeUrl),
         FfiConverterTypeLoginOptions_lower(options),$0
     )
 }
@@ -1193,7 +1193,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_ic_auth_client_checksum_method_authclient_base_key_type() != 30127) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_build_login_url() != 18049) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_build_login_url() != 28609) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ic_auth_client_checksum_method_authclient_delegation_chain_json() != 19219) {
@@ -1208,7 +1208,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_ic_auth_client_checksum_method_authclient_is_authenticated() != 62279) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_login() != 43477) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_login() != 60491) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ic_auth_client_checksum_method_authclient_logout() != 41503) {

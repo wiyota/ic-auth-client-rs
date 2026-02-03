@@ -55,7 +55,7 @@ let options = LoginOptions(
 )
 
 let loginUrl = try client.buildLoginUrl(
-    iiUrl: "https://id.ai",
+    authBridgeUrl: "https://<ii-integration-canister>.ic0.app",
     redirectUri: "myapp://auth",
     options: options
 )
@@ -67,7 +67,7 @@ use `WKWebView`:
 ```swift
 let session = AuthSession(client: client)
 session.login(
-    iiUrl: "https://id.ai",
+    authBridgeUrl: "https://<ii-integration-canister>.ic0.app",
     redirectUri: "myapp://auth",
     options: options,
     window: window,
