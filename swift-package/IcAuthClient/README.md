@@ -61,7 +61,8 @@ let loginUrl = try client.buildLoginUrl(
 )
 ```
 
-On iOS/macOS, `AuthSession` wraps `ASWebAuthenticationSession`:
+On iOS/macOS, `AuthSession` can open the default browser (recommended) or
+use `WKWebView`:
 
 ```swift
 let session = AuthSession(client: client)
@@ -69,11 +70,45 @@ session.login(
     iiUrl: "https://id.ai",
     redirectUri: "myapp://auth",
     options: options,
-    window: window
+    window: window,
+    mode: .defaultBrowser
 ) { result in
     // handle result
 }
 ```
+
+When using `.defaultBrowser`, forward the callback URL back to the session
+so it can finish the login:
+
+```swift
+// e.g. in a SwiftUI view
+.onOpenURL { url in
+    session.handleCallbackUrl(url)
+}
+```
+
+On macOS, if you use an `NSApplicationDelegate`, also forward URLs from
+`application(_:open:)` to the same handler:
+
+```swift
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            session.handleCallbackUrl(url)
+        }
+    }
+}
+```
+
+Make sure the URL scheme in `redirectUri` is registered by your app
+(Info.plist `CFBundleURLTypes`). The scheme can be any custom value (for example
+`myapp://auth`), but it must match your app’s registered URL schemes exactly.
+If it isn’t registered, the browser can’t redirect back to your app and the
+login will fail.
+
+In the browser, you may also see console warnings about CORS or `fetch` failing
+for the custom scheme; the bridge falls back to a redirect with a `payload`
+query parameter, so the redirect must be allowed for the flow to complete.
 
 ## Notes
 
