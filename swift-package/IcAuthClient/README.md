@@ -61,8 +61,7 @@ let loginUrl = try client.buildLoginUrl(
 )
 ```
 
-On iOS/macOS, `AuthSession` can open the default browser (recommended) or
-use `WKWebView`:
+On iOS/macOS, `AuthSession` opens the default browser:
 
 ```swift
 let session = AuthSession(client: client)
@@ -70,8 +69,7 @@ session.login(
     authBridgeUrl: "https://<ii-integration-canister>.ic0.app",
     redirectUri: "myapp://auth",
     options: options,
-    window: window,
-    mode: .defaultBrowser
+    window: window
 ) { result in
     // handle result
 }
