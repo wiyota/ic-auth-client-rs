@@ -253,14 +253,26 @@ export function startLogin(
   authClient: AuthClient,
   redirectUri: string,
   windowOpenerFeatures?: string | undefined,
+  callbacks?: StartLoginCallbacks,
 ) {
   attachPopupCloseHandler();
   authClient.login({
-    onSuccess: (response) => handleSuccess(response, redirectUri),
-    onError: (error) => handleFailure(error, redirectUri),
+    onSuccess: (response) => {
+      callbacks?.onSuccess?.(response);
+      handleSuccess(response, redirectUri);
+    },
+    onError: (error) => {
+      callbacks?.onError?.(error);
+      handleFailure(error, redirectUri);
+    },
     windowOpenerFeatures,
   });
 }
+
+export type StartLoginCallbacks = {
+  onSuccess?: (response: InternetIdentityAuthResponseSuccess) => void;
+  onError?: (error: string | undefined) => void;
+};
 
 function handleSuccess(
   response: InternetIdentityAuthResponseSuccess,

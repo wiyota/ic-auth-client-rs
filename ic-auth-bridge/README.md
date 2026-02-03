@@ -28,6 +28,21 @@ startLogin(client, params.redirectUri);
 The helper will attempt to POST a JSON payload to `redirectUri`. If the POST
 fails, it falls back to redirecting with a `payload` query parameter.
 
+### Success and error hooks
+
+You can optionally receive success/error callbacks in the popup to update UI.
+
+```ts
+startLogin(client, params.redirectUri, undefined, {
+  onSuccess: () => {
+    // e.g. show "You can close this tab" message
+  },
+  onError: (error) => {
+    console.error("Login failed", error);
+  },
+});
+```
+
 ### End-to-end flow
 
 1. Your native app calls `NativeAuthClient.login`.
