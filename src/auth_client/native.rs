@@ -729,10 +729,14 @@ impl NativeAuthClient {
                 (response, CallbackResult::Success(success_data))
             }
             Err(err) => {
+                let status_code = match &err {
+                    NativeLoginError::Custom(message) if message != "Invalid response type" => 200,
+                    _ => 400,
+                };
                 let response = if render_html {
-                    Self::html_response("<h1>Login failed</h1><p>Invalid payload.</p>", 400)
+                    Self::html_response("<h1>Login failed</h1><p>Invalid payload.</p>", status_code)
                 } else {
-                    Self::cors_response("Error", 400)
+                    Self::cors_response("Error", status_code)
                 };
                 (response, CallbackResult::Error(err))
             }
