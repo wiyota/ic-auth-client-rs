@@ -8,6 +8,26 @@ Swift Package Manager wrapper for the UniFFI-generated Swift bindings of
 
 ## Usage
 
+### Add as a Swift Package
+
+This repository is a Swift Package. Add it by URL and import `IcAuthClient`:
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/perforate-org/ic-auth-client-rs.git", from: "X.Y.Z")
+]
+```
+
+```swift
+// target dependencies
+dependencies: [
+    .product(name: "IcAuthClient", package: "IcAuthClient")
+]
+```
+
+### Basic Usage
+
 Basic usage (macOS / iOS):
 
 ```swift
