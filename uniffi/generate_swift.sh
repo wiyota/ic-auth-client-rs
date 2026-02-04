@@ -7,7 +7,7 @@ OUT_DIR="${ROOT_DIR}/uniffi/generated/swift"
 mkdir -p "${OUT_DIR}"
 
 # Build the cdylib with UniFFI metadata.
-cargo build --no-default-features --features "uniffi,keyring,native" --release
+cargo build --no-default-features --features "keyring,swift" --release
 
 # Locate the built dynamic library.
 LIB_PATH="${ROOT_DIR}/target/release"
@@ -28,6 +28,6 @@ if [[ ! -f "${DYLIB}" ]]; then
 fi
 
 # Requires uniffi-bindgen to be installed in PATH.
-cargo run --no-default-features --features "uniffi,keyring,native" --bin uniffi-bindgen generate --language swift --out-dir "${OUT_DIR}" --library "${DYLIB}"
+cargo run --no-default-features --features "keyring,swift" --bin uniffi-bindgen generate --language swift --out-dir "${OUT_DIR}" --library "${DYLIB}"
 
 echo "Swift bindings generated at: ${OUT_DIR}"

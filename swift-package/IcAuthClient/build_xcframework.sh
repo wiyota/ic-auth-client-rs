@@ -7,8 +7,8 @@ OUT_DIR="${PKG_DIR}/IcAuthClientFFI.xcframework"
 BUILD_DIR="${ROOT_DIR}/target/uniffi-build"
 HEADERS_DIR="${BUILD_DIR}/headers"
 
-IOS_FEATURES_DEFAULT="uniffi,native,keyring"
-MAC_FEATURES_DEFAULT="uniffi,native,keyring"
+IOS_FEATURES_DEFAULT="keyring,swift"
+MAC_FEATURES_DEFAULT="keyring,swift"
 IOS_FEATURES="${IOS_FEATURES:-${IOS_FEATURES_DEFAULT}}"
 MAC_FEATURES="${MAC_FEATURES:-${MAC_FEATURES_DEFAULT}}"
 
