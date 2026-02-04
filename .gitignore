@@ -9,7 +9,7 @@ pkg/
 
 # JavaScript
 node_modules/
-ii-integration/package-lock.json
+ii-bridge/package-lock.json
 package-lock.json
 
 # UniFFI
