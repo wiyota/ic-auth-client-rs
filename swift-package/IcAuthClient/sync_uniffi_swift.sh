@@ -28,4 +28,13 @@ for file in "${OUT_DIR}"/*.swift; do
   perl -0pi -e 's/#if canImport\(ic_auth_clientFFI\)\nimport ic_auth_clientFFI\n#endif/#if canImport(IcAuthClientFFI)\nimport IcAuthClientFFI\n#elseif canImport(ic_auth_clientFFI)\nimport ic_auth_clientFFI\n#endif/g' "${file}"
 done
 
+AUTH_LOGIN_AVAIL='@available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")'
+AUTH_FILE="${OUT_DIR}/ic_auth_client.swift"
+if [[ -f "${AUTH_FILE}" ]]; then
+  perl -0pi -e 's/\n\s*\@available\(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS"\)\n/\n/g' "${AUTH_FILE}"
+  perl -0pi -e 's/\n\s*\(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS"\)\n/\n/g' "${AUTH_FILE}"
+  perl -0pi -e 's/\n    func login\(authBridgeUrl: String, options: LoginOptions\) throws /\n    \@available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")\n    func login(authBridgeUrl: String, options: LoginOptions) throws /g' "${AUTH_FILE}"
+  perl -0pi -e 's/\nopen func login\(authBridgeUrl: String, options: LoginOptions\)throws   /\n\@available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")\nopen func login(authBridgeUrl: String, options: LoginOptions)throws   /g' "${AUTH_FILE}"
+fi
+
 echo "Synced UniFFI Swift sources into: ${OUT_DIR}"

@@ -6,35 +6,6 @@ Swift Package Manager wrapper for the UniFFI-generated Swift bindings of
 - `IcAuthClient` Swift target (generated bindings + hand-written helpers).
 - `IcAuthClientFFI` binary target (xcframework built from Rust).
 
-## Requirements
-
-- macOS 13+ / iOS 16+
-- Xcode 15+ (Swift tools 5.9)
-
-## Build the xcframework
-
-From the repo root:
-
-```sh
-swift-package/IcAuthClient/build_all.sh
-```
-
-This does:
-
-1. `./uniffi/generate_swift.sh` to generate Swift bindings.
-2. `sync_uniffi_swift.sh` to sync generated Swift into `Sources/IcAuthClient`.
-3. `build_xcframework.sh` to build `IcAuthClientFFI.xcframework`.
-
-## Run tests
-
-```sh
-cd swift-package/IcAuthClient
-swift test
-```
-
-The integration test uses keyring storage and clears the test service
-name before and after the run.
-
 ## Usage
 
 Basic usage (macOS / iOS):
@@ -61,19 +32,22 @@ let loginUrl = try client.buildLoginUrl(
 )
 ```
 
-On iOS/macOS, `AuthSession` opens the default browser:
+On iOS/macOS, `AuthSession` opens the default browser.
+`AuthSession` is `@MainActor`, so call it on the main thread:
 
 ```swift
 let session = AuthSession(client: client)
 session.login(
     authBridgeUrl: "https://<ii-bridge-canister>.ic0.app",
     redirectUri: "myapp://auth",
-    options: options,
-    window: window
+    options: options
 ) { result in
     // handle result
 }
 ```
+
+Keep the `AuthSession` instance alive until the login completes, since it holds
+pending state internally.
 
 Forward the callback URL back to the session
 so it can finish the login:
@@ -84,6 +58,9 @@ so it can finish the login:
     session.handleCallbackUrl(url)
 }
 ```
+
+`handleCallbackUrl(_:)` returns `true` if the URL was handled and the login
+completed, otherwise `false`.
 
 On macOS, if you use an `NSApplicationDelegate`, also forward URLs from
 `application(_:open:)` to the same handler:
@@ -108,11 +85,38 @@ In the browser, you may also see console warnings about CORS or `fetch` failing
 for the custom scheme; the bridge falls back to a redirect with a `payload`
 query parameter, so the redirect must be allowed for the flow to complete.
 
+## Desktop-only login
+
+`AuthClient.login(authBridgeUrl:options:)` starts a desktop login flow using
+a local callback server. This is supported on macOS/Linux/Windows and is not
+available on iOS (the Swift API is marked unavailable on iOS and will fail to
+compile). On iOS/macOS app targets, prefer `AuthSession`.
+
+## LoginOptions notes
+
+- `maxTimeToLive` is in nanoseconds.
+- `timeoutMillis` is in milliseconds.
+- `windowOpenerFeatures` applies to desktop browser flows.
+- `customValuesJson` must be a JSON object string.
+
+## IcpKit delegated identity
+
+The package includes helpers to bridge to IcpKit:
+
+```swift
+let delegated = try client.icpDelegatedIdentity()
+```
+
+This parses the delegation chain JSON from the underlying identity and returns
+an `ICPDelegatedIdentity`.
+
 ## Notes
 
 - The default key type for Swift `init(serviceName:)` is `Secp256k1`.
+  You can check the runtime value with `baseKeyType()`.
 
-- For local development, you can mock `Keychain` before creating the client:
+- For local development, you can mock `Keychain` before creating the client.
+  On Apple platforms this is an alias of `enableKeyringMock()`:
 
 ```swift
 import IcAuthClient
@@ -120,6 +124,37 @@ import IcAuthClient
 enableKeychainMock() // for local development
 let client = try AuthClient(serviceName: "my-app")
 ```
+
+## Development
+
+### Requirements
+
+- macOS 13+ / iOS 16+
+- Xcode 15+ (Swift tools 5.9)
+
+### Build the xcframework
+
+From the repo root:
+
+```sh
+swift-package/IcAuthClient/build_all.sh
+```
+
+This does:
+
+1. `./uniffi/generate_swift.sh` to generate Swift bindings.
+2. `sync_uniffi_swift.sh` to sync generated Swift into `Sources/IcAuthClient`.
+3. `build_xcframework.sh` to build `IcAuthClientFFI.xcframework`.
+
+### Run tests
+
+```sh
+cd swift-package/IcAuthClient
+swift test
+```
+
+The integration test uses keyring storage and clears the test service
+name before and after the run.
 
 - If you need to regenerate bindings or rebuild the xcframework, use
   `build_all.sh`.

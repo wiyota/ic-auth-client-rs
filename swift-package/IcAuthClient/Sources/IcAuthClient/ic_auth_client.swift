@@ -551,6 +551,7 @@ public protocol AuthClientProtocol: AnyObject, Sendable {
      *
      * This is only supported on macOS, Linux, and Windows.
      */
+    @available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")
     func login(authBridgeUrl: String, options: LoginOptions) throws 
     
     /**
@@ -711,6 +712,7 @@ open func isAuthenticated() -> Bool  {
      *
      * This is only supported on macOS, Linux, and Windows.
      */
+@available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")
 open func login(authBridgeUrl: String, options: LoginOptions)throws   {try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_login(
             self.uniffiCloneHandle(),

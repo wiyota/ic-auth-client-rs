@@ -21,14 +21,12 @@ public final class AuthSession: NSObject {
             authBridgeUrl: String,
             redirectUri: String,
             options: LoginOptions,
-            window: UIWindow,
             completion: @escaping (Result<Void, Error>) -> Void
         ) {
             startSession(
                 authBridgeUrl: authBridgeUrl,
                 redirectUri: redirectUri,
                 options: options,
-                window: window,
                 completion: completion
             )
         }
@@ -39,14 +37,12 @@ public final class AuthSession: NSObject {
             authBridgeUrl: String,
             redirectUri: String,
             options: LoginOptions,
-            window: NSWindow,
             completion: @escaping (Result<Void, Error>) -> Void
         ) {
             startSession(
                 authBridgeUrl: authBridgeUrl,
                 redirectUri: redirectUri,
                 options: options,
-                window: window,
                 completion: completion
             )
         }
@@ -56,7 +52,6 @@ public final class AuthSession: NSObject {
         authBridgeUrl: String,
         redirectUri: String,
         options: LoginOptions,
-        window: AnyObject,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         do {
