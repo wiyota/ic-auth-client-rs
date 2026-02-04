@@ -9,7 +9,7 @@ use ic_auth_client::{
     AuthClientLoginOptions, NativeAuthClient as AuthClient, api::AuthResponseSuccess,
 };
 use std::{env, path::PathBuf, sync::Arc};
-use util::{canister_id::II_INTEGRATION, dfx_network::is_local_dfx};
+use util::{canister_id::II_BRIDGE, dfx_network::is_local_dfx};
 
 mod backend;
 pub use backend::{BackendActor, ScoreEntry};
@@ -95,7 +95,7 @@ impl Auth {
             .on_error(on_error)
             .build();
 
-        self.auth_client.login(ii_integration(), options);
+        self.auth_client.login(ii_bridge(), options);
         Ok(())
     }
 
@@ -183,10 +183,10 @@ fn build_pem_auth_client() -> Result<AuthClient> {
     )?)
 }
 
-fn ii_integration() -> String {
+fn ii_bridge() -> String {
     if is_local_dfx() {
-        return format!("http://localhost:4943/?canisterId={}", *II_INTEGRATION);
+        return format!("http://localhost:4943/?canisterId={}", *II_BRIDGE);
     }
 
-    format!("https://{}.ic0.app/", *II_INTEGRATION)
+    format!("https://{}.ic0.app/", *II_BRIDGE)
 }

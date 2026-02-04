@@ -6,8 +6,8 @@ by the Internet Computer.
 ## Requirements
 
 - Rust toolchain
-- `dfx` running locally for the backend/II integration canisters
-- Node.js (needed to build `ii-integration`)
+- `dfx` running locally for the backend/II bridge canisters
+- Node.js (needed to build `ii-bridge`)
 
 ## Running Locally
 
@@ -16,10 +16,10 @@ by the Internet Computer.
    dfx start --background
    dfx deploy
    ```
-2. Build the Internet Identity integration assets (only needed when they change):
+2. Build the Internet Identity bridge assets (only needed when they change):
    ```bash
-   npm --prefix ../../ii-integration install
-   npm --prefix ../../ii-integration run build
+   npm --prefix ../../ii-bridge install
+   npm --prefix ../../ii-bridge run build
    ```
 3. Launch the gpui client:
    ```bash

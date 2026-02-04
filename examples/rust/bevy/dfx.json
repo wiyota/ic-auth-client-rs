@@ -5,13 +5,13 @@
       "package": "backend",
       "type": "rust"
     },
-    "ii-integration": {
+    "ii-bridge": {
       "type": "assets",
       "frontend": {
-        "entrypoint": "ii-integration/dist/index.html"
+        "entrypoint": "ii-bridge/dist/index.html"
       },
-      "source": ["ii-integration/dist"],
-      "build": ["cd ii-integration && npm run build"]
+      "source": ["ii-bridge/dist"],
+      "build": ["cd ii-bridge && npm run build"]
     },
     "internet_identity": {
       "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",

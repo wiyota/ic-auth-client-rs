@@ -19,7 +19,7 @@ for this Internet Identity example.
    dfx start --background
    dfx deploy
    ```
-2. Build the Internet Identity integration assets (only needed when they
+2. Build the Internet Identity bridge assets (only needed when they
    change):
    ```bash
    npm install

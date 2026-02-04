@@ -55,7 +55,7 @@ let options = LoginOptions(
 )
 
 let loginUrl = try client.buildLoginUrl(
-    authBridgeUrl: "https://<ii-integration-canister>.ic0.app",
+    authBridgeUrl: "https://<ii-bridge-canister>.ic0.app",
     redirectUri: "myapp://auth",
     options: options
 )
@@ -66,7 +66,7 @@ On iOS/macOS, `AuthSession` opens the default browser:
 ```swift
 let session = AuthSession(client: client)
 session.login(
-    authBridgeUrl: "https://<ii-integration-canister>.ic0.app",
+    authBridgeUrl: "https://<ii-bridge-canister>.ic0.app",
     redirectUri: "myapp://auth",
     options: options,
     window: window

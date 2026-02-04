@@ -34,7 +34,7 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 ic-agent = { version = "0.45", default-features = false, features = [
     "wasm-bindgen",
 ] }
-ic-auth-client = { path = "../../../../", features = ["tracing"] }
+ic-auth-client = { path = "../../../../../", features = ["tracing"] }
 leptos = { version = "0.8.15", features = ["csr"] }
 leptos-fetch = "0.4.9"
 leptos_meta = "0.8.5"

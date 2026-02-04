@@ -12,11 +12,11 @@ pub static BACKEND: Lazy<Principal> = Lazy::new(|| {
     parse_principal(canister_id)
 });
 
-pub static II_INTEGRATION: Lazy<Principal> = Lazy::new(|| {
-    let mut canister_id = dotenv!("CANISTER_ID_II_INTEGRATION").to_string();
+pub static II_BRIDGE: Lazy<Principal> = Lazy::new(|| {
+    let mut canister_id = dotenv!("CANISTER_ID_II_BRIDGE").to_string();
     if canister_id.is_empty() {
-        canister_id = env::var("CANISTER_ID_II_INTEGRATION")
-            .expect("CANISTER_ID_II_INTEGRATION is must be set");
+        canister_id =
+            env::var("CANISTER_ID_II_BRIDGE").expect("CANISTER_ID_II_BRIDGE is must be set");
     }
 
     parse_principal(canister_id)

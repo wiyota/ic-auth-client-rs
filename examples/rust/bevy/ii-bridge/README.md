@@ -1,4 +1,4 @@
-# ii-integration
+# ii-bridge
 
 Minimal Internet Identity login page used by the native app integration.
 
@@ -26,13 +26,6 @@ npm run build
 
 - `CANISTER_ID_INTERNET_IDENTITY` (required for local/dev URLs)
 - `DFX_NETWORK` (`ic` for mainnet, anything else for local/dev)
-
-You can override the provider via the AuthClient config. To enable the guided
-upgrade flow (legacy users -> id.ai):
-
-```ts
-identityProvider: "https://id.ai/?feature_flag_guided_upgrade=true";
-```
 
 ## Structure
 
