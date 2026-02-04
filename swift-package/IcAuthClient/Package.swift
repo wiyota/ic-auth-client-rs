@@ -11,7 +11,8 @@ let package = Package(
         .library(name: "IcAuthClient", targets: ["IcAuthClient"])
     ],
     dependencies: [
-        .package(url: "https://github.com/kosta-bity/IcpKit.git", .upToNextMajor(from: "0.2.0"))
+        .package(
+            url: "https://github.com/wiyota/IcpKit.git", branch: "feature/for-ic-auth-client")
     ],
     targets: [
         .binaryTarget(
@@ -20,7 +21,10 @@ let package = Package(
         ),
         .target(
             name: "IcAuthClient",
-            dependencies: ["IcAuthClientFFI"],
+            dependencies: [
+                "IcAuthClientFFI",
+                .product(name: "IcpKit", package: "IcpKit"),
+            ],
             path: "Sources/IcAuthClient",
             linkerSettings: [
                 .linkedFramework("Carbon", .when(platforms: [.macOS]))

@@ -520,31 +520,68 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 
+/**
+ * High-level authentication client for native platforms.
+ */
 public protocol AuthClientProtocol: AnyObject, Sendable {
     
+    /**
+     * Return the base key type used by the client, if known.
+     */
     func baseKeyType()  -> String?
     
     func buildLoginUrl(authBridgeUrl: String, redirectUri: String, options: LoginOptions) throws  -> String
     
+    /**
+     * Return the delegation chain as JSON, if present.
+     */
     func delegationChainJson()  -> String?
     
     func finishLoginFromPayload(payload: String) throws 
     
+    /**
+     * Return the underlying identity for direct cryptographic operations.
+     */
     func identity()  -> AuthIdentity
     
     func isAuthenticated()  -> Bool
     
+    /**
+     * Start a desktop login flow using a local callback server.
+     *
+     * This is only supported on macOS, Linux, and Windows.
+     */
     func login(authBridgeUrl: String, options: LoginOptions) throws 
     
+    /**
+     * Clear any stored credentials.
+     */
     func logout() 
     
+    /**
+     * Return the authenticated principal as a text string.
+     */
     func principalText() throws  -> String
     
+    /**
+     * Return the secp256k1 private key for the current identity.
+     */
     func secp256k1PrivateKey() throws  -> Data
     
+    /**
+     * Return the uncompressed secp256k1 public key for the current identity.
+     */
     func secp256k1UncompressedPublicKey() throws  -> Data
     
+    /**
+     * Sign an Internet Computer request using the current identity.
+     */
+    func signIcRequest(message: Data, domain: String) throws  -> Data
+    
 }
+/**
+ * High-level authentication client for native platforms.
+ */
 open class AuthClient: AuthClientProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
@@ -584,7 +621,18 @@ open class AuthClient: AuthClientProtocol, @unchecked Sendable {
     public func uniffiCloneHandle() -> UInt64 {
         return try! rustCall { uniffi_ic_auth_client_fn_clone_authclient(self.handle, $0) }
     }
-    // No primary constructor declared for this class.
+    /**
+     * Create a new client using the provided service name.
+     */
+public convenience init(serviceName: String)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeAuthError_lift) {
+    uniffi_ic_auth_client_fn_constructor_authclient_new(
+        FfiConverterString.lower(serviceName),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
 
     deinit {
         if handle == 0 {
@@ -596,16 +644,11 @@ open class AuthClient: AuthClientProtocol, @unchecked Sendable {
     }
 
     
-public static func newKeyring(serviceName: String)throws  -> AuthClient  {
-    return try  FfiConverterTypeAuthClient_lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
-    uniffi_ic_auth_client_fn_constructor_authclient_new_keyring(
-        FfiConverterString.lower(serviceName),$0
-    )
-})
-}
-    
 
     
+    /**
+     * Return the base key type used by the client, if known.
+     */
 open func baseKeyType() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_ic_auth_client_fn_method_authclient_base_key_type(
@@ -625,6 +668,9 @@ open func buildLoginUrl(authBridgeUrl: String, redirectUri: String, options: Log
 })
 }
     
+    /**
+     * Return the delegation chain as JSON, if present.
+     */
 open func delegationChainJson() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_ic_auth_client_fn_method_authclient_delegation_chain_json(
@@ -641,6 +687,9 @@ open func finishLoginFromPayload(payload: String)throws   {try rustCallWithError
 }
 }
     
+    /**
+     * Return the underlying identity for direct cryptographic operations.
+     */
 open func identity() -> AuthIdentity  {
     return try!  FfiConverterTypeAuthIdentity_lift(try! rustCall() {
     uniffi_ic_auth_client_fn_method_authclient_identity(
@@ -657,6 +706,11 @@ open func isAuthenticated() -> Bool  {
 })
 }
     
+    /**
+     * Start a desktop login flow using a local callback server.
+     *
+     * This is only supported on macOS, Linux, and Windows.
+     */
 open func login(authBridgeUrl: String, options: LoginOptions)throws   {try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_login(
             self.uniffiCloneHandle(),
@@ -666,6 +720,9 @@ open func login(authBridgeUrl: String, options: LoginOptions)throws   {try rustC
 }
 }
     
+    /**
+     * Clear any stored credentials.
+     */
 open func logout()  {try! rustCall() {
     uniffi_ic_auth_client_fn_method_authclient_logout(
             self.uniffiCloneHandle(),$0
@@ -673,6 +730,9 @@ open func logout()  {try! rustCall() {
 }
 }
     
+    /**
+     * Return the authenticated principal as a text string.
+     */
 open func principalText()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_principal_text(
@@ -681,6 +741,9 @@ open func principalText()throws  -> String  {
 })
 }
     
+    /**
+     * Return the secp256k1 private key for the current identity.
+     */
 open func secp256k1PrivateKey()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_secp256k1_private_key(
@@ -689,10 +752,26 @@ open func secp256k1PrivateKey()throws  -> Data  {
 })
 }
     
+    /**
+     * Return the uncompressed secp256k1 public key for the current identity.
+     */
 open func secp256k1UncompressedPublicKey()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authclient_secp256k1_uncompressed_public_key(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Sign an Internet Computer request using the current identity.
+     */
+open func signIcRequest(message: Data, domain: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
+    uniffi_ic_auth_client_fn_method_authclient_sign_ic_request(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(message),
+        FfiConverterString.lower(domain),$0
     )
 })
 }
@@ -747,17 +826,35 @@ public func FfiConverterTypeAuthClient_lower(_ value: AuthClient) -> UInt64 {
 
 
 
+/**
+ * A concrete identity instance associated with an `AuthClient`.
+ */
 public protocol AuthIdentityProtocol: AnyObject, Sendable {
     
+    /**
+     * Return the delegation chain as JSON, if present.
+     */
     func delegationChainJson()  -> String?
     
+    /**
+     * Return the identity principal as text.
+     */
     func principalText() throws  -> String
     
+    /**
+     * Return the DER-encoded public key for the identity, if available.
+     */
     func publicKeyDer()  -> Data?
     
+    /**
+     * Sign an arbitrary message with the identity.
+     */
     func signArbitrary(message: Data) throws  -> Data
     
 }
+/**
+ * A concrete identity instance associated with an `AuthClient`.
+ */
 open class AuthIdentity: AuthIdentityProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
@@ -811,6 +908,9 @@ open class AuthIdentity: AuthIdentityProtocol, @unchecked Sendable {
     
 
     
+    /**
+     * Return the delegation chain as JSON, if present.
+     */
 open func delegationChainJson() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_ic_auth_client_fn_method_authidentity_delegation_chain_json(
@@ -819,6 +919,9 @@ open func delegationChainJson() -> String?  {
 })
 }
     
+    /**
+     * Return the identity principal as text.
+     */
 open func principalText()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authidentity_principal_text(
@@ -827,6 +930,9 @@ open func principalText()throws  -> String  {
 })
 }
     
+    /**
+     * Return the DER-encoded public key for the identity, if available.
+     */
 open func publicKeyDer() -> Data?  {
     return try!  FfiConverterOptionData.lift(try! rustCall() {
     uniffi_ic_auth_client_fn_method_authidentity_public_key_der(
@@ -835,6 +941,9 @@ open func publicKeyDer() -> Data?  {
 })
 }
     
+    /**
+     * Sign an arbitrary message with the identity.
+     */
 open func signArbitrary(message: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeAuthError_lift) {
     uniffi_ic_auth_client_fn_method_authidentity_sign_arbitrary(
@@ -892,18 +1001,63 @@ public func FfiConverterTypeAuthIdentity_lower(_ value: AuthIdentity) -> UInt64 
 
 
 
+/**
+ * Options for building login URLs and starting login flows.
+ */
 public struct LoginOptions: Equatable, Hashable {
+    /**
+     * Custom identity provider URL (defaults to Internet Identity if `None`).
+     */
     public var identityProvider: String?
+    /**
+     * Maximum session TTL in nanoseconds.
+     */
     public var maxTimeToLive: UInt64?
+    /**
+     * Allow PIN-based authentication when supported.
+     */
     public var allowPinAuthentication: Bool?
+    /**
+     * Derivation origin to use for the session.
+     */
     public var derivationOrigin: String?
+    /**
+     * Browser window features (desktop only).
+     */
     public var windowOpenerFeatures: String?
+    /**
+     * Request timeout in milliseconds.
+     */
     public var timeoutMillis: UInt64?
+    /**
+     * Custom values JSON to pass through to the identity provider.
+     */
     public var customValuesJson: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(identityProvider: String?, maxTimeToLive: UInt64?, allowPinAuthentication: Bool?, derivationOrigin: String?, windowOpenerFeatures: String?, timeoutMillis: UInt64?, customValuesJson: String?) {
+    public init(
+        /**
+         * Custom identity provider URL (defaults to Internet Identity if `None`).
+         */identityProvider: String?, 
+        /**
+         * Maximum session TTL in nanoseconds.
+         */maxTimeToLive: UInt64?, 
+        /**
+         * Allow PIN-based authentication when supported.
+         */allowPinAuthentication: Bool?, 
+        /**
+         * Derivation origin to use for the session.
+         */derivationOrigin: String?, 
+        /**
+         * Browser window features (desktop only).
+         */windowOpenerFeatures: String?, 
+        /**
+         * Request timeout in milliseconds.
+         */timeoutMillis: UInt64?, 
+        /**
+         * Custom values JSON to pass through to the identity provider.
+         */customValuesJson: String?) {
         self.identityProvider = identityProvider
         self.maxTimeToLive = maxTimeToLive
         self.allowPinAuthentication = allowPinAuthentication
@@ -966,18 +1120,36 @@ public func FfiConverterTypeLoginOptions_lower(_ value: LoginOptions) -> RustBuf
 }
 
 
+/**
+ * Errors exposed by the UniFFI bindings.
+ */
 public enum AuthError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
     
     
+    /**
+     * A generic error message.
+     */
     case Message(String
     )
+    /**
+     * Invalid JSON in `custom_values_json`.
+     */
     case InvalidCustomValues(String
     )
+    /**
+     * Failed to derive or serialize a principal.
+     */
     case Principal(String
     )
+    /**
+     * Signature creation failed.
+     */
     case Signature(String
     )
+    /**
+     * Key retrieval or parsing failed.
+     */
     case Key(String
     )
 
@@ -1174,6 +1346,16 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
         }
     }
 }
+/**
+ * Enable a mock keyring backend for local development.
+ *
+ * Call this before creating an `AuthClient` to avoid touching the OS keyring.
+ */
+public func enableKeyringMock()  {try! rustCall() {
+    uniffi_ic_auth_client_fn_func_enable_keyring_mock($0
+    )
+}
+}
 
 private enum InitializationResult {
     case ok
@@ -1190,52 +1372,58 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_base_key_type() != 30127) {
+    if (uniffi_ic_auth_client_checksum_func_enable_keyring_mock() != 27650) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ic_auth_client_checksum_method_authclient_base_key_type() != 5412) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ic_auth_client_checksum_method_authclient_build_login_url() != 28609) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_delegation_chain_json() != 19219) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_delegation_chain_json() != 42834) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ic_auth_client_checksum_method_authclient_finish_login_from_payload() != 59432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_identity() != 54038) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_identity() != 36288) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ic_auth_client_checksum_method_authclient_is_authenticated() != 62279) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_login() != 60491) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_login() != 54307) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_logout() != 41503) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_logout() != 33176) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_principal_text() != 59988) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_principal_text() != 51078) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_secp256k1_private_key() != 38487) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_secp256k1_private_key() != 54313) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authclient_secp256k1_uncompressed_public_key() != 1632) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_secp256k1_uncompressed_public_key() != 57398) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authidentity_delegation_chain_json() != 52902) {
+    if (uniffi_ic_auth_client_checksum_method_authclient_sign_ic_request() != 23209) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authidentity_principal_text() != 12502) {
+    if (uniffi_ic_auth_client_checksum_method_authidentity_delegation_chain_json() != 28408) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authidentity_public_key_der() != 31188) {
+    if (uniffi_ic_auth_client_checksum_method_authidentity_principal_text() != 21236) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_method_authidentity_sign_arbitrary() != 52772) {
+    if (uniffi_ic_auth_client_checksum_method_authidentity_public_key_der() != 52048) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_ic_auth_client_checksum_constructor_authclient_new_keyring() != 25572) {
+    if (uniffi_ic_auth_client_checksum_method_authidentity_sign_arbitrary() != 36526) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ic_auth_client_checksum_constructor_authclient_new() != 42107) {
         return InitializationResult.apiChecksumMismatch
     }
 

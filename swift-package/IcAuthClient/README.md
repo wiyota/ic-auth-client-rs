@@ -42,7 +42,7 @@ Basic usage (macOS / iOS):
 ```swift
 import IcAuthClient
 
-let client = try AuthClient.newKeyring(serviceName: "my-app")
+let client = try AuthClient(serviceName: "my-app")
 
 let options = LoginOptions(
     identityProvider: nil,
@@ -75,7 +75,7 @@ session.login(
 }
 ```
 
-When using `.defaultBrowser`, forward the callback URL back to the session
+Forward the callback URL back to the session
 so it can finish the login:
 
 ```swift
@@ -110,6 +110,16 @@ query parameter, so the redirect must be allowed for the flow to complete.
 
 ## Notes
 
-- The default key type for Swift `newKeyring` is `Secp256k1`.
+- The default key type for Swift `init(serviceName:)` is `Secp256k1`.
+
+- For local development, you can mock `Keychain` before creating the client:
+
+```swift
+import IcAuthClient
+
+enableKeychainMock() // for local development
+let client = try AuthClient(serviceName: "my-app")
+```
+
 - If you need to regenerate bindings or rebuild the xcframework, use
   `build_all.sh`.

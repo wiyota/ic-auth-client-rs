@@ -16,10 +16,10 @@ final class IcAuthIntegrationTests: XCTestCase {
 
     func testKeyMaterialAndPrincipalInterop() async throws {
         let serviceName = "ic-auth-client-integration"
-        let existing = try AuthClient.newKeyring(serviceName: serviceName)
+        let existing = try AuthClient(serviceName: serviceName)
         existing.logout()
 
-        let client = try AuthClient.newKeyring(serviceName: serviceName)
+        let client = try AuthClient(serviceName: serviceName)
         defer { client.logout() }
         XCTAssertEqual(client.baseKeyType(), "Secp256k1")
         let principalText = try client.principalText()
