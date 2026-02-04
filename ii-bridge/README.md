@@ -1,4 +1,4 @@
-# ii-integration
+# ii-bridge
 
 Minimal Internet Identity login page used by the native app integration.
 

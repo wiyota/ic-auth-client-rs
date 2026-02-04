@@ -14,10 +14,14 @@ const AUTH_POPUP_WIDTH = 576;
 // TODO: revert to 625 after II provides a fix on their end
 const AUTH_POPUP_HEIGHT = 826;
 
+let authClient: Awaited<ReturnType<typeof createAuthClient>> | null = null;
+
 /** Boot the page flow and handle top-level errors. */
 async function main() {
   try {
     const params = parseParams(window.location.href);
+    const identityProvider = params.identityProvider ?? getIdentityProvider();
+    authClient = await createAuthClient(params, identityProvider);
     renderStart(params);
   } catch (error) {
     console.error("Error:", error);
@@ -32,36 +36,46 @@ function renderStart(params: Params) {
 
   errorElement.hidden = true;
 
-  button.addEventListener("click", () =>
-    startLogin(button, params).catch((error) => {
+  button.addEventListener("click", () => {
+    try {
+      startLogin(button, params);
+    } catch (error) {
       console.error("Failed to start login:", error);
-    }),
-  );
+      renderError(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 /** Start login flow with UI state management and error handling. */
-async function startLogin(button: HTMLButtonElement, params: Params) {
+function startLogin(button: HTMLButtonElement, params: Params) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  const identityProvider = params.identityProvider ?? getIdentityProvider();
-
-  try {
-    const authClient = await createAuthClient(params, identityProvider);
-    startLoginCore(
-      authClient,
-      params.redirectUri,
-      popupCenter({ height: AUTH_POPUP_HEIGHT, width: AUTH_POPUP_WIDTH }),
-      {
-        onSuccess: renderSuccessState,
-        onError: renderFailureState,
-      },
-    );
-  } catch (error) {
+  renderError(new Error(""), true);
+  if (!authClient) {
     button.disabled = false;
     button.removeAttribute("aria-busy");
-    renderError(error as Error);
-    throw error;
+    renderError(
+      new Error("Auth client not ready. Please refresh and try again."),
+    );
+    return;
   }
+
+  startLoginCore(
+    authClient,
+    params.redirectUri,
+    popupCenter({ height: AUTH_POPUP_HEIGHT, width: AUTH_POPUP_WIDTH }),
+    {
+      onSuccess: renderSuccessState,
+      onError: (error) => {
+        renderFailureState(error);
+        if (error) {
+          renderError(new Error(error));
+        }
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      },
+    },
+  );
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -69,14 +83,19 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 /** Show an error message in the UI. */
-function renderError(error: Error) {
+function renderError(error: Error, clearOnly = false) {
   const errorElement = getRequiredElement<HTMLParagraphElement>("#error");
+  if (clearOnly) {
+    errorElement.textContent = "";
+    errorElement.hidden = true;
+    return;
+  }
   errorElement.textContent = error.message;
   errorElement.hidden = false;
 }
 
 function renderSuccessState() {
-  renderResultState("Authentication Successful", "You can close this tab.");
+  renderResultState("Authentication Successful", "You may close this page.");
 }
 
 function renderFailureState(error?: string) {
