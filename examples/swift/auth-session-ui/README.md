@@ -12,13 +12,13 @@ This example is a full package with:
 
 - Rust toolchain
 - DFX (Internet Computer SDK)
-- Node.js (for building `ii_bridge`)
+- Node.js (for building `ii-bridge`)
 - Xcode 15+ / Swift 5.9 (iOS 16+ / macOS 13+)
 - XcodeGen (`brew install xcodegen`)
 
 ## Setup
 
-Provide a mainnet canister id that supports a `get_caller` query method.
+Provide a mainnet canister id that supports a `whoami` query method.
 `authBridgeUrl` should point to the `ii-bridge` canister URL
 (for example `https://<ii-bridge-canister>.ic0.app` on mainnet).
 
@@ -32,12 +32,12 @@ Open `AuthSessionUI.xcodeproj`, choose iOS or macOS target, and run.
 
 ## In the App
 
-- II Canister Id (optional): blank uses the default `ii-bridge` canister
-- Backend Canister Id (mainnet): a canister with `get_caller`
+- II Bridge Canister Id
+- Backend Canister Id: a canister with `whoami`
 - Redirect Scheme: `authsessionui`
 
 Tap **Login** to open the `ii-bridge` canister (which in turn opens
-Internet Identity), then **Call Backend** to verify `get_caller`.
+Internet Identity), then **Call Backend** to verify `whoami`.
 
 ## Notes
 
