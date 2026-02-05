@@ -12,7 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/wiyota/IcpKit.git", branch: "feature/for-ic-auth-client")
+            url: "https://github.com/wiyota/IcpKit.git", branch: "for-ic-auth-client")
     ],
     targets: [
         .binaryTarget(

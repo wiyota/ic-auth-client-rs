@@ -9,7 +9,7 @@ packages:
     path: ../../../
   IcpKit:
     url: https://github.com/wiyota/IcpKit.git
-    branch: feature/for-ic-auth-client
+    branch: for-ic-auth-client
 schemes:
   AuthSessionUI-iOS:
     build:
