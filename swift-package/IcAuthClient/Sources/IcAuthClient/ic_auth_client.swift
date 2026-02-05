@@ -551,8 +551,10 @@ public protocol AuthClientProtocol: AnyObject, Sendable {
      *
      * This is only supported on macOS, Linux, and Windows.
      */
-    @available(iOS, unavailable, message: "login is only supported on desktop targets; use AuthSession on iOS")
+#if !os(iOS)
     func login(authBridgeUrl: String, options: LoginOptions) throws 
+#endif
+
     
     /**
      * Clear any stored credentials.
