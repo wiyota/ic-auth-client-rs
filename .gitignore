@@ -15,6 +15,7 @@ package-lock.json
 # Swift
 Package.resolved
 .build
+.swiftpm
 examples/swift/**/*.xcodeproj/
 
 # UniFFI
