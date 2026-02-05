@@ -51,7 +51,7 @@ extension AuthIdentity {
         }
         let parsed = try DelegationChainParser.parse(json: json)
         let signer = try AuthIdentitySigningPrincipal(identity: self)
-        return try ICPDelegatedIdentity(
+        return ICPDelegatedIdentity.unchecked(
             fromPublicKeyDer: parsed.publicKeyDer,
             to: signer,
             chain: parsed.delegations

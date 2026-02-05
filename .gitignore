@@ -12,6 +12,10 @@ node_modules/
 ii-bridge/package-lock.json
 package-lock.json
 
+# Swift
+Package.resolved
+.build
+
 # UniFFI
 uniffi/generated/
 
