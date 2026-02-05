@@ -6,7 +6,7 @@ options:
     macOS: "13.0"
 packages:
   IcAuthClient:
-    path: ../../../swift-package/IcAuthClient
+    path: ../../../
   IcpKit:
     url: https://github.com/wiyota/IcpKit.git
     branch: feature/for-ic-auth-client
